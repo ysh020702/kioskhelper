@@ -6,11 +6,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import com.example.kioskhelper.presentation.kiosk.screen.KioskScreen
+import com.example.kioskhelper.vision.TfliteTaskObjectDetector
+import com.example.kioskhelper.vision.YoloV8TfliteInterpreter
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class KioskActivity : ComponentActivity() {
 
+    @Inject lateinit var detector: YoloV8TfliteInterpreter
     private val requestPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* no-op */ }
 
@@ -25,7 +29,7 @@ class KioskActivity : ComponentActivity() {
 
         // 2) 나머지는 전부 Compose Screen/VM에서 처리
         setContent {
-            KioskScreen() // ← 네가 만든 Compose 스크린(이미 VM을 내부에서 hiltViewModel로 가져간다고 가정)
+            KioskScreen(detector = detector) // ← 네가 만든 Compose 스크린(이미 VM을 내부에서 hiltViewModel로 가져간다고 가정)
         }
     }
 }

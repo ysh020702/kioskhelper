@@ -1,4 +1,4 @@
-package com.example.kioskhelper.vision
+package com.example.kioskhelper.vision.deprecated
 
 import android.content.Context
 import android.graphics.Bitmap

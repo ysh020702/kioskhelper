@@ -33,24 +33,23 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.kioskhelper.presentation.detector.Detector
-import com.example.kioskhelper.presentation.detector.NoopDetector
 import com.example.kioskhelper.presentation.kiosk.KioskViewModel
 import com.example.kioskhelper.presentation.kiosk.VisionViewModel
 import com.example.kioskhelper.presentation.kiosk.setupCamera
+import com.example.kioskhelper.vision.YoloV8TfliteInterpreter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KioskScreen(
     kioskVm: KioskViewModel = hiltViewModel(),
-    visionVm: VisionViewModel = hiltViewModel() // ⬅️ 신규
+    visionVm: VisionViewModel = hiltViewModel(), // ⬅️ 신규
+    detector : YoloV8TfliteInterpreter
 ) {
     val ui by kioskVm.ui.collectAsStateWithLifecycle()
     val vUi by visionVm.ui.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // 실제 Detector 구현(Yolo/MlKit)로 교체
-    val detector: Detector = remember { NoopDetector() }
+
 
     Scaffold(
         topBar = {
@@ -72,19 +71,15 @@ fun KioskScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 CameraWithOverlay(
                     modifier = Modifier.fillMaxSize(),
-                    bindUseCases = { previewView ->
+                    bindUseCases = { previewView, overlayView ->
                         setupCamera(
                             previewView = previewView,
-                            lifecycleOwner = lifecycleOwner,
-                            detector = detector,
-                            // ✅ Vision 쪽 매칭에 필요한 버튼 목록은 KioskVM의 현재 스냅샷을 공급
-                            uiButtonsProvider = { kioskVm.ui.value.buttons },
-                            // ✅ 화면좌표 박스는 VisionVM이 보유
-                            onDetections = visionVm::onDetections
+                            overlayView = overlayView,
+                            lifecycleOwner = lifecycleOwner,   // LocalLifecycleOwner.current
+                            detector = detector,               // Hilt @Singleton 주입된 인스턴스
+                            throttleMs = 0L                    // 필요 시 120L 등으로 조절
                         )
-                        visionVm.setRunning(true)
                     },
-                    boxes = vUi.boxes,
                     highlightIds = ui.highlightedIds,
                     ambiguous = ui.highlightedIds.size >= 2
                 )

@@ -2,10 +2,9 @@ package com.example.kioskhelper.core
 
 import android.graphics.Bitmap
 import android.graphics.RectF
-import com.example.kioskhelper.vision.IconRoleClassifier
-import com.example.kioskhelper.vision.MlKitOcr
-import com.example.kioskhelper.core.Utils
-import com.example.kioskhelper.vision.YoloTfliteDetector
+import com.example.kioskhelper.vision.deprecated.IconRoleClassifier
+import com.example.kioskhelper.vision.deprecated.MlKitOcr
+import com.example.kioskhelper.vision.deprecated.YoloTfliteDetector
 import androidx.camera.core.ImageProxy
 import com.example.kioskhelper.presentation.model.ButtonBox
 import com.example.kioskhelper.presentation.overlayview.DetectionOverlayView

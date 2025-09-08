@@ -39,6 +39,7 @@ android {
     buildFeatures {
         compose = true
     }
+    aaptOptions { noCompress("tflite") } // tflite 원본 유지
 }
 hilt{
     enableAggregatingTask = false
@@ -67,11 +68,15 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.3")
     implementation("androidx.camera:camera-view:1.3.3")
     // 🔥 TensorFlow Lite Task Vision (정확한 라인: 0.4.x)
+    // TFLite Task Vision (ObjectDetector)
     implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
+    // (선택) GPU delegate
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
     // (선택) 기본 TFLite & GPU. 2.12~2.14 아무거나 호환됩니다.
-    implementation("org.tensorflow:tensorflow-lite:2.12.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.12.0")
-    // optional
+    // TensorFlow Lite
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+// 선택) Support (메타데이터/서명 도우미)
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
     // ML Kit Text Recognition (Korean)
     implementation("com.google.mlkit:text-recognition-korean:16.0.0")
     // Coroutines

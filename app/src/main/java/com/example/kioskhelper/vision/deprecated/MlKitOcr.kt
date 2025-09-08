@@ -1,14 +1,12 @@
-package com.example.kioskhelper.vision
+package com.example.kioskhelper.vision.deprecated
 
 import android.content.Context
 import android.graphics.Bitmap
-import com.example.kioskhelper.core.Utils
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
-
 
 class MlKitOcr(ctx: Context) {
     private val client = TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
@@ -24,5 +22,3 @@ class MlKitOcr(ctx: Context) {
             }.addOnFailureListener { cont.resume("" to 0f) }
     }
 }
-
-
