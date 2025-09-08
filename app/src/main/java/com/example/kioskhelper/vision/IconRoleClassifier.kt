@@ -22,13 +22,13 @@ class IconRoleClassifier(ctx: Context, modelAsset: String) {
 
         Log.d("RoleClf", "IN  shape=${inShape.contentToString()}, type=${inTensor.dataType()}")
         Log.d("RoleClf", "OUT shape=${outShape.contentToString()}, type=${outTensor.dataType()}")
-
+/*
         // 선택: 분류기 강제 검증(roles.size=8 가정)
         val expected = roles.size
         require(outShape.size == 2 && outShape[0] == 1 && outShape[1] == expected) {
             "Role classifier expected OUT=[1,$expected], but got ${outShape.contentToString()} — " +
                     "확인: icon16.tflite가 탐지기(예: YOLO)로 잘못 들어오지 않았는지, Utils.loadModel이 올바른 Asset을 여는지"
-        }
+        }*/
     }
 
 

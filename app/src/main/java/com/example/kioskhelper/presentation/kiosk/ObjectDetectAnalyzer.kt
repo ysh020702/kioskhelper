@@ -46,21 +46,15 @@ class ObjectDetectAnalyzer @Inject constructor(
             dets = dets.sortedByDescending { it.score }.take(20)
 
             // 3) 각 박스 crop → 역할 분류 → ButtonBox로 변환
-            val boxes: List<ButtonBox> = dets.mapNotNull { det ->
-                val r = det.rect
-                val l = r.left.toInt().coerceAtLeast(0)
-                val t = r.top.toInt().coerceAtLeast(0)
-                val w = r.width().toInt().coerceAtLeast(1)
-                val h = r.height().toInt().coerceAtLeast(1)
-                if (l + w <= src.width && t + h <= src.height) {
-                    val crop = Bitmap.createBitmap(src, l, t, w, h)
-                    val role = roleClf.predictRole(crop)            // ⬅️ 여기서 적용
-                    ButtonBox(id = role.hashCode(), rect = r)       // 역할 기반 id
-                } else null
+            val boxes: List<ButtonBox> = dets.mapIndexed { idx, det ->
+                ButtonBox(
+                    id = idx,        // 탐지만 할 경우 단순 index id 부여
+                    rect = det.rect  // YOLO가 준 bounding box 그대로 사용
+                )
             }
 
-
             overlayView.post {
+                overlayView.setSourceSize(rotated.width, rotated.height) // ✅ 추가
                 overlayView.submitBoxes(boxes)
                 overlayView.invalidate()
             }

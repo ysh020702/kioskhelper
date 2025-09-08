@@ -22,6 +22,12 @@ class DetectionOverlayView @JvmOverloads constructor(
         color = Color.RED
     }
 
+    // ✅ [추가] 원본 크기와 매핑 행렬
+    private var srcW: Int = 0
+    private var srcH: Int = 0
+    private val srcToView = Matrix()
+    private val tmpRect = RectF()
+
 
     private var pulse = 0f
     private var highlightIds: List<Int> = emptyList()
@@ -47,6 +53,29 @@ class DetectionOverlayView @JvmOverloads constructor(
     fun clearHighlight() {
         highlightIds = emptyList(); amb = false
         stopAnimators(); invalidate()
+    }
+
+    // ✅ [추가] YOLO에 넣었던 원본(Bitmap) 크기 알려주기
+    fun setSourceSize(w: Int, h: Int) {
+        srcW = w; srcH = h
+        computeMatrix()
+        invalidate()
+    }
+
+    // ✅ [추가] PreviewView.ScaleType.FILL_CENTER(센터-크롭) 매핑
+    private fun computeMatrix() {
+        if (srcW <= 0 || srcH <= 0 || width <= 0 || height <= 0) return
+        val scale = kotlin.math.max(width.toFloat() / srcW, height.toFloat() / srcH)
+        val dx = (width - srcW * scale) / 2f
+        val dy = (height - srcH * scale) / 2f
+        srcToView.reset()
+        srcToView.postScale(scale, scale)
+        srcToView.postTranslate(dx, dy)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        computeMatrix() // 뷰 크기 변하면 재계산
     }
 
 
@@ -82,25 +111,27 @@ class DetectionOverlayView @JvmOverloads constructor(
     override fun onDetachedFromWindow() { super.onDetachedFromWindow(); stopAnimators() }
 
 
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (boxes.isEmpty()) return
+
         val a = (120 + 80 * sin(pulse * Math.PI)).toInt().coerceIn(0, 255)
         paint.alpha = a
         paint.strokeWidth = 6f + 4f * pulse
-
-        if (highlightIds.isNotEmpty()) {
-            Log.d("Overlay", "highlightIds=$highlightIds, boxIds=${boxes.map{it.id}}")
-        }
-
 
         val idsToDraw = when {
             amb && highlightIds.size >= 2 -> setOf(highlightIds[altIndex])
             else -> highlightIds.toSet()
         }
+
         boxes.forEach { b ->
+            // ✅ [핵심 한 줄] src(px) → view 좌표로 변환
+            tmpRect.set(b.rect)
+            if (srcW > 0 && srcH > 0) srcToView.mapRect(tmpRect)
+
             paint.color = if (idsToDraw.contains(b.id)) Color.RED else Color.BLUE
-            canvas.drawRoundRect(b.rect, 18f, 18f, paint)
+            canvas.drawRoundRect(tmpRect, 18f, 18f, paint)
         }
     }
 }
