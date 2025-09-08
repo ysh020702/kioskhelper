@@ -29,7 +29,8 @@ class KioskActivity : ComponentActivity() {
 
         // 2) 나머지는 전부 Compose Screen/VM에서 처리
         setContent {
-            KioskScreen(detector = detector) // ← 네가 만든 Compose 스크린(이미 VM을 내부에서 hiltViewModel로 가져간다고 가정)
+            KioskScreen(
+            ) // ← 네가 만든 Compose 스크린(이미 VM을 내부에서 hiltViewModel로 가져간다고 가정)
         }
     }
 }

@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.*
 import android.util.AttributeSet
+import android.util.Log
 import android.view.View
 import com.example.kioskhelper.presentation.model.ButtonBox
 import kotlin.math.sin
@@ -88,13 +89,17 @@ class DetectionOverlayView @JvmOverloads constructor(
         paint.alpha = a
         paint.strokeWidth = 6f + 4f * pulse
 
+        if (highlightIds.isNotEmpty()) {
+            Log.d("Overlay", "highlightIds=$highlightIds, boxIds=${boxes.map{it.id}}")
+        }
+
 
         val idsToDraw = when {
             amb && highlightIds.size >= 2 -> setOf(highlightIds[altIndex])
             else -> highlightIds.toSet()
         }
         boxes.forEach { b ->
-            paint.color = if (idsToDraw.contains(b.id)) Color.RED else Color.argb(80, 200, 200, 200)
+            paint.color = if (idsToDraw.contains(b.id)) Color.RED else Color.BLUE
             canvas.drawRoundRect(b.rect, 18f, 18f, paint)
         }
     }

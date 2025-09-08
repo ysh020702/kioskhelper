@@ -36,17 +36,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kioskhelper.presentation.kiosk.KioskViewModel
 import com.example.kioskhelper.presentation.kiosk.VisionViewModel
 import com.example.kioskhelper.presentation.kiosk.setupCamera
-import com.example.kioskhelper.vision.YoloV8TfliteInterpreter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KioskScreen(
     kioskVm: KioskViewModel = hiltViewModel(),
     visionVm: VisionViewModel = hiltViewModel(), // ⬅️ 신규
-    detector : YoloV8TfliteInterpreter
 ) {
     val ui by kioskVm.ui.collectAsStateWithLifecycle()
-    val vUi by visionVm.ui.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
 
 
@@ -76,8 +73,9 @@ fun KioskScreen(
                             previewView = previewView,
                             overlayView = overlayView,
                             lifecycleOwner = lifecycleOwner,   // LocalLifecycleOwner.current
-                            detector = detector,               // Hilt @Singleton 주입된 인스턴스
-                            throttleMs = 0L                    // 필요 시 120L 등으로 조절
+                            detector = visionVm.detector,               // Hilt @Singleton 주입된 인스턴스
+                            roleClf = visionVm.roleClf,
+                            throttleMs = 100L                    // 필요 시 120L 등으로 조절
                         )
                     },
                     highlightIds = ui.highlightedIds,

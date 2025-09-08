@@ -9,16 +9,17 @@ import androidx.camera.view.PreviewView
 import com.example.kioskhelper.presentation.model.ButtonBox
 import com.example.kioskhelper.presentation.overlayview.DetectionOverlayView
 import com.example.kioskhelper.utils.YuvToRgbConverter
-import com.example.kioskhelper.vision.TfliteTaskObjectDetector
 import com.example.kioskhelper.vision.YoloV8TfliteInterpreter
+import com.example.kioskhelper.vision.IconRoleClassifier
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlin.math.max
 
-class ObjectDetectAnalyzer(
+class ObjectDetectAnalyzer @Inject constructor(
+    private val detector: YoloV8TfliteInterpreter,
+    private val roleClf: IconRoleClassifier,
     private val previewView: PreviewView,            // 런타임 생성 View → 직접 전달
-    private val overlayView: DetectionOverlayView,   // 런타임 생성 View → 직접 전달
-    private val detector: YoloV8TfliteInterpreter,  // Hilt로 상위에서 주입받아 전달
+    private val overlayView: DetectionOverlayView,  // Hilt로 상위에서 주입받아 전달
     private val yuvConverter: YuvToRgbConverter,
     private val throttleMs: Long = 0L
 ) : ImageAnalysis.Analyzer {
@@ -39,28 +40,28 @@ class ObjectDetectAnalyzer(
             val rotated = if (rot != 0) rotate(src, rot) else src
             android.util.Log.d("ANALYZER", "bitmap=${rotated.width}x${rotated.height}, preview=${previewView.width}x${previewView.height}")
             // YOLO 추론(결과는 rotated 좌표계)
-            val dets = detector.detect(rotated)
+            var dets = detector.detect(rotated)
             android.util.Log.d("ANALYZER", "detections=${dets.size}")
 
-            // 상위 3개 점수 확인
-            dets.sortedByDescending { it.score }.take(3).forEachIndexed { idx, d ->
-                android.util.Log.d("ANALYZER", "top[$idx]=${"%.3f".format(d.score)} rect=${d.rect}")
+            dets = dets.sortedByDescending { it.score }.take(20)
+
+            // 3) 각 박스 crop → 역할 분류 → ButtonBox로 변환
+            val boxes: List<ButtonBox> = dets.mapNotNull { det ->
+                val r = det.rect
+                val l = r.left.toInt().coerceAtLeast(0)
+                val t = r.top.toInt().coerceAtLeast(0)
+                val w = r.width().toInt().coerceAtLeast(1)
+                val h = r.height().toInt().coerceAtLeast(1)
+                if (l + w <= src.width && t + h <= src.height) {
+                    val crop = Bitmap.createBitmap(src, l, t, w, h)
+                    val role = roleClf.predictRole(crop)            // ⬅️ 여기서 적용
+                    ButtonBox(id = role.hashCode(), rect = r)       // 역할 기반 id
+                } else null
             }
 
-            // 화면(PreviewView.FILL_CENTER) 좌표로 변환
-            val boxes = mapToPreview(rotated, dets.map { it.rect })
-                .mapIndexed { i, r -> ButtonBox(id = i, rect = r) }
-
-            val screenBoxes = mapToPreview(rotated, dets.map { it.rect })
-            val finalBoxes = if (screenBoxes.isEmpty()) {
-                // ✅ 탐지가 하나도 없을 때 중앙에 임시 박스 생성
-                val w = previewView.width.toFloat()
-                val h = previewView.height.toFloat()
-                listOf(ButtonBox(999, RectF(w*0.4f, h*0.4f, w*0.6f, h*0.6f)))
-            } else screenBoxes.mapIndexed { i, r -> ButtonBox(id = i, rect = r) }
 
             overlayView.post {
-                overlayView.submitBoxes(finalBoxes)
+                overlayView.submitBoxes(boxes)
                 overlayView.invalidate()
             }
         }  catch (e: Throwable) {
@@ -76,18 +77,4 @@ class ObjectDetectAnalyzer(
         return Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
     }
 
-    private fun mapToPreview(src: Bitmap, rects: List<RectF>): List<RectF> {
-        val wSrc = src.width.toFloat(); val hSrc = src.height.toFloat()
-        val wDst = previewView.width.toFloat(); val hDst = previewView.height.toFloat()
-        if (wDst == 0f || hDst == 0f) return emptyList()
-        val scale = max(wDst / wSrc, hDst / hSrc)
-        val dx = (wDst - wSrc * scale) / 2f
-        val dy = (hDst - hSrc * scale) / 2f
-        return rects.map { r ->
-            RectF(
-                r.left * scale + dx, r.top * scale + dy,
-                r.right * scale + dx, r.bottom * scale + dy
-            )
-        }
-    }
 }

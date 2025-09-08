@@ -1,6 +1,5 @@
 package com.example.kioskhelper.vision
 
-
 import android.content.Context
 import android.graphics.*
 import android.util.Log
@@ -20,18 +19,11 @@ data class YoloDet(
     val rect: RectF  // src(회전 보정된 원본) 좌표계
 )
 
-/**
- * YOLOv8 TFLite용 초간단 해석기
- * - 입력: [1, input, input, 3] float32/uint8
- * - 출력: 흔히 [1,84,8400] (YOLOv8) 또는 [1,8400,85] (v5형식)
- *   - C==84 → 4(box) + 80(class), obj 없음 (v8 스타일)
- *   - C==85 → 4 + 1(obj) + 80(class) (v5 스타일)
- */
 class YoloV8TfliteInterpreter(
     context: Context,
     modelAsset: String = "model.tflite",
-    private val inputSize: Int = 640,     // 네 모델 입력 크기(보통 640 또는 320)
-    private val confThresh: Float = 0.25f,
+    private val inputSize: Int = 640,
+    private val confThresh: Float = 0.15f,  // ← 디버깅용으로 낮춤(필요시 0.25로 복구)
     private val iouThresh: Float = 0.45f,
     numThreads: Int = 2
 ) {
@@ -41,7 +33,6 @@ class YoloV8TfliteInterpreter(
     private val outShape: IntArray
 
     init {
-        // 모델 로드
         val fd = context.assets.openFd(modelAsset)
         val channel = FileInputStream(fd.fileDescriptor).channel
         val model = channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
@@ -57,56 +48,41 @@ class YoloV8TfliteInterpreter(
         Log.d("YOLO", "OUT type=$outType, shape=${outShape.contentToString()}")
     }
 
-    /**
-     * src: Analyzer에서 회전 보정된 Bitmap (예: ImageProxy 회전 반영 후)
-     * return: src 좌표계의 박스들
-     */
     fun detect(src: Bitmap): List<YoloDet> {
-        // 1) letterbox 전처리 (gain/pad 기록)
         val prep = letterbox(src, inputSize, inputSize)
-
-        // 2) 입력 버퍼 준비
         val input = makeInputBuffer(prep.bitmap, inType)
 
-        // 3) 출력 버퍼 준비 (단일 출력 텐서 가정)
-        // outShape는 [1, 5, 8400]
         val outBuf: Any = when (outType) {
-            DataType.FLOAT32 -> Array(outShape[0]) {
-                Array(outShape[1]) {
-                    FloatArray(outShape[2])
-                }
-            }
-            DataType.UINT8 -> Array(outShape[0]) {
-                Array(outShape[1]) {
-                    ByteArray(outShape[2])
-                }
-            }
+            DataType.FLOAT32 -> Array(outShape[0]) { Array(outShape[1]) { FloatArray(outShape[2]) } }
+            DataType.UINT8   -> Array(outShape[0]) { Array(outShape[1]) { ByteArray(outShape[2]) } }
             else -> error("Unsupported output type: $outType")
         }
 
-        // 4) 추론
         interpreter.run(input, outBuf)
 
-        // 5) 출력 해석
         val detsInputSpace: List<YoloDet> = when (outType) {
             DataType.FLOAT32 -> {
-                // 3차원 배열을 1차원 배열로 변환
                 val flatArray = (outBuf as Array<Array<FloatArray>>)[0].flatMap { it.asIterable() }.toFloatArray()
                 parseFloatOutput(flatArray, outShape)
             }
             DataType.UINT8 -> {
-                // 3차원 배열을 1차원 배열로 변환
                 val flatArray = (outBuf as Array<Array<ByteArray>>)[0].flatMap { it.asIterable() }.toByteArray()
                 parseUint8Output(flatArray, outShape)
             }
             else -> emptyList()
         }
 
-        val top = detsInputSpace.sortedByDescending { it.score }
-        Log.d("YOLO", "tops=" + top.joinToString { "%.2f".format(it.score) })
+        Log.d("YOLO", "rawTopN01=" + detsInputSpace.sortedByDescending { it.score }
+            .take(3).joinToString { "s=%.3f rect=%s".format(it.score, it.rect.toShortString()) })
 
-        // 6) letterbox 역변환 → src 좌표
-        return detsInputSpace.map { it.copy(rect = unletterbox(it.rect, prep, src.width, src.height)) }
+        val mapped = detsInputSpace
+            .map { it.copy(rect = unletterbox(it.rect, prep, src.width, src.height)) }
+            .filter { it.rect.width() >= 1f && it.rect.height() >= 1f }
+
+        Log.d("YOLO", "mappedTopPx=" + mapped.sortedByDescending { it.score }
+            .take(3).joinToString { "s=%.3f rect=%s".format(it.score, it.rect.toShortString()) })
+
+        return mapped
     }
 
     // ───────────── 전처리/후처리 유틸 ─────────────
@@ -114,14 +90,14 @@ class YoloV8TfliteInterpreter(
     private data class Letterbox(val bitmap: Bitmap, val gain: Float, val padX: Float, val padY: Float)
 
     private fun letterbox(src: Bitmap, dstW: Int, dstH: Int): Letterbox {
-        val r = min(dstW.toFloat()/src.width, dstH.toFloat()/src.height) // FIT
+        val r = min(dstW.toFloat() / src.width, dstH.toFloat() / src.height)
         val nw = (src.width * r).toInt()
         val nh = (src.height * r).toInt()
         val resized = Bitmap.createScaledBitmap(src, nw, nh, true)
 
         val out = Bitmap.createBitmap(dstW, dstH, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
-        c.drawColor(Color.BLACK)  // 패딩 색 (훈련과 맞추면 가장 좋음)
+        c.drawColor(Color.BLACK)
         val dx = (dstW - nw) / 2f
         val dy = (dstH - nh) / 2f
         c.drawBitmap(resized, dx, dy, null)
@@ -129,10 +105,27 @@ class YoloV8TfliteInterpreter(
     }
 
     private fun unletterbox(r: RectF, lb: Letterbox, srcW: Int, srcH: Int): RectF {
-        val x1 = ((r.left   - lb.padX) / lb.gain).coerceIn(0f, srcW.toFloat())
-        val y1 = ((r.top    - lb.padY) / lb.gain).coerceIn(0f, srcH.toFloat())
-        val x2 = ((r.right  - lb.padX) / lb.gain).coerceIn(0f, srcW.toFloat())
-        val y2 = ((r.bottom - lb.padY) / lb.gain).coerceIn(0f, srcH.toFloat())
+        val nx1 = r.left.coerceIn(0f, 1f)
+        val ny1 = r.top.coerceIn(0f, 1f)
+        val nx2 = r.right.coerceIn(0f, 1f)
+        val ny2 = r.bottom.coerceIn(0f, 1f)
+
+        var x1 = ((nx1 * lb.bitmap.width  - lb.padX) / lb.gain)
+        var y1 = ((ny1 * lb.bitmap.height - lb.padY) / lb.gain)
+        var x2 = ((nx2 * lb.bitmap.width  - lb.padX) / lb.gain)
+        var y2 = ((ny2 * lb.bitmap.height - lb.padY) / lb.gain)
+
+        if (x2 < x1) { val t = x1; x1 = x2; x2 = t }
+        if (y2 < y1) { val t = y1; y1 = y2; y2 = t }
+
+        x1 = x1.coerceIn(0f, srcW.toFloat())
+        y1 = y1.coerceIn(0f, srcH.toFloat())
+        x2 = x2.coerceIn(0f, srcW.toFloat())
+        y2 = y2.coerceIn(0f, srcH.toFloat())
+
+        if (x2 - x1 < 1f) x2 = (x1 + 1f).coerceAtMost(srcW - 1f)
+        if (y2 - y1 < 1f) y2 = (y1 + 1f).coerceAtMost(srcH - 1f)
+
         return RectF(x1, y1, x2, y2)
     }
 
@@ -148,7 +141,7 @@ class YoloV8TfliteInterpreter(
                 val r = ((p ushr 16) and 0xFF) / 255f
                 val g = ((p ushr 8) and 0xFF) / 255f
                 val b = (p and 0xFF) / 255f
-                buf.putFloat(r); buf.putFloat(g); buf.putFloat(b) // RGB
+                buf.putFloat(r); buf.putFloat(g); buf.putFloat(b)
             }
             buf.rewind(); buf
         } else {
@@ -166,91 +159,132 @@ class YoloV8TfliteInterpreter(
         }
     }
 
+    private fun isNormalized(values: FloatArray, sample: Int = 200): Boolean {
+        val n = values.size
+        val limit = min(n, sample)
+        var cntIn01 = 0
+        for (i in 0 until limit) {
+            val v = values[i].coerceIn(-1e6f, 1e6f)
+            if (v in 0f..1f) cntIn01++
+        }
+        return cntIn01 >= (limit * 0.8f)
+    }
+
     private fun parseFloatOutput(out: FloatArray, shape: IntArray): List<YoloDet> {
         require(shape.size == 3 && shape[0] == 1) { "Unexpected output shape: ${shape.contentToString()}" }
 
-        // [1, N, C] or [1, C, N]
-        val n: Int
-        val c: Int
-        val nFirst: Boolean
-        if (shape[1] >= shape[2]) { // [1, N, C]
-            n = shape[1]; c = shape[2]; nFirst = true
-        } else {                    // [1, C, N]  ← 너의 경우 [1, 5, 8400]
-            c = shape[1]; n = shape[2]; nFirst = false
-        }
+        // 2D 평면의 row/col로 해석
+        val rows = shape[1]
+        val cols = shape[2]
+        val C = min(rows, cols)   // 채널 수(보통 5/84/85)
+        val N = max(rows, cols)   // 박스 수(보통 8400)
+        val isCN = (rows == C)    // [1, C, N]이면 true, [1, N, C]이면 false
 
         fun get(i: Int, ci: Int): Float {
-            // i: 0..n-1, ci: 0..c-1
-            return if (nFirst) out[i * c + ci] else out[ci * n + i]
+            // i: [0..N-1], ci: [0..C-1]
+            return if (isCN) {
+                // row=ci, col=i
+                out[ci * cols + i]
+            } else {
+                // row=i, col=ci
+                out[i * cols + ci]
+            }
         }
+
+        Log.d("YOLO", "layout=${if (isCN) "[1,C,N]" else "[1,N,C]"} C=$C N=$N")
+
+        // 좌표 스케일 판별
+        val cxList = FloatArray(N) { get(it, 0) }
+        val cyList = FloatArray(N) { get(it, 1) }
+        val wList  = FloatArray(N) { get(it, 2) }
+        val hList  = FloatArray(N) { get(it, 3) }
+        val normalized = isNormalized(cxList) && isNormalized(cyList)
+
+        fun toRectN01(cx: Float, cy: Float, w: Float, h: Float): RectF {
+            return if (normalized) {
+                RectF(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
+            } else {
+                RectF(
+                    (cx - w / 2f) / inputSize,
+                    (cy - h / 2f) / inputSize,
+                    (cx + w / 2f) / inputSize,
+                    (cy + h / 2f) / inputSize
+                )
+            }
+        }
+
+        dumpRange(::get, N, tag = "head", take = 8)
 
         val list = ArrayList<YoloDet>(128)
 
-        when (c) {
-            5 -> {
-                // 단일 클래스: [x, y, w, h, score]
-                for (i in 0 until n) {
-                    val x = get(i, 0)
-                    val y = get(i, 1)
-                    val w = get(i, 2)
-                    val h = get(i, 3)
-                    val s = sigmoid(get(i, 4)) // 보통 로짓 → 시그모이드, 이미 0~1이면 필요 없음
-
+        when (C) {
+            5 -> { // [cx,cy,w,h,score]
+                for (i in 0 until N) {
+                    val cx = get(i, 0)
+                    val cy = get(i, 1)
+                    val w  = get(i, 2)
+                    val h  = get(i, 3)
+                    val s  = sigmoid(get(i, 4))
                     if (s >= confThresh) {
-                        val rect = RectF(x - w/2f, y - h/2f, x + w/2f, y + h/2f)
-                        list += YoloDet(cls = 0, score = s, rect = rect) // 단일 클래스라 0으로 고정
+                        val r = toRectN01(cx, cy, w, h)
+                        if (r.width() > 1e-6f && r.height() > 1e-6f) {
+                            list += YoloDet(cls = 0, score = s, rect = r)
+                        }
                     }
                 }
             }
-
-            84 -> {
-                // v8 멀티클래스(4+80)
-                for (i in 0 until n) {
-                    val x = get(i, 0); val y = get(i, 1); val w = get(i, 2); val h = get(i, 3)
-                    var best = -Float.MAX_VALUE; var bestIdx = -1
-                    var ci = 4
-                    while (ci < 84) {
+            84 -> { // [cx,cy,w,h, 80class]
+                for (i in 0 until N) {
+                    val cx = get(i, 0)
+                    val cy = get(i, 1)
+                    val w  = get(i, 2)
+                    val h  = get(i, 3)
+                    var best = -Float.MAX_VALUE
+                    var bestIdx = -1
+                    for (ci in 4 until 84) {
                         val v = sigmoid(get(i, ci))
                         if (v > best) { best = v; bestIdx = ci - 4 }
-                        ci++
                     }
                     if (best >= confThresh) {
-                        val rect = RectF(x - w/2f, y - h/2f, x + w/2f, y + h/2f)
-                        list += YoloDet(bestIdx, best, rect)
+                        val r = toRectN01(cx, cy, w, h)
+                        if (r.width() > 1e-6f && r.height() > 1e-6f) {
+                            list += YoloDet(bestIdx, best, r)
+                        }
                     }
                 }
             }
-
-            85 -> {
-                // v5 형식(4 + obj + 80)
-                for (i in 0 until n) {
-                    val x = get(i, 0); val y = get(i, 1); val w = get(i, 2); val h = get(i, 3)
+            85 -> { // [cx,cy,w,h,obj, 80class]
+                for (i in 0 until N) {
+                    val cx = get(i, 0)
+                    val cy = get(i, 1)
+                    val w  = get(i, 2)
+                    val h  = get(i, 3)
                     val obj = sigmoid(get(i, 4))
-                    var best = -Float.MAX_VALUE; var bestIdx = -1
-                    var ci = 5
-                    while (ci < 85) {
+                    var best = -Float.MAX_VALUE
+                    var bestIdx = -1
+                    for (ci in 5 until 85) {
                         val v = sigmoid(get(i, ci))
                         if (v > best) { best = v; bestIdx = ci - 5 }
-                        ci++
                     }
                     val s = obj * best
                     if (s >= confThresh) {
-                        val rect = RectF(x - w/2f, y - h/2f, x + w/2f, y + h/2f)
-                        list += YoloDet(bestIdx, s, rect)
+                        val r = toRectN01(cx, cy, w, h)
+                        if (r.width() > 1e-6f && r.height() > 1e-6f) {
+                            list += YoloDet(bestIdx, s, r)
+                        }
                     }
                 }
             }
-
             else -> {
-                Log.w("YOLO", "Unhandled channel count c=$c; customize parser.")
+                Log.w("YOLO", "Unhandled channel count C=$C; customize parser.")
             }
         }
 
         return nms(list, iouThresh)
     }
 
-    private fun parseUint8Output(out: ByteArray, shape: IntArray): List<YoloDet> {
-        // 필요 시 양자화 파라미터로 복원(여기서는 생략)
+    private fun parseUint8Output(@Suppress("UNUSED_PARAMETER") out: ByteArray, @Suppress("UNUSED_PARAMETER") shape: IntArray): List<YoloDet> {
+        Log.w("YOLO", "UINT8 output parsing not implemented.")
         return emptyList()
     }
 
@@ -280,4 +314,16 @@ class YoloV8TfliteInterpreter(
     }
 
     private fun sigmoid(x: Float) = (1f / (1f + exp(-x)))
+
+    private fun dumpRange(get: (Int, Int) -> Float, n: Int, tag: String, take: Int = 10) {
+        val t = min(n, take)
+        val xs = FloatArray(t) { get(it, 0) }
+        val ys = FloatArray(t) { get(it, 1) }
+        val ws = FloatArray(t) { get(it, 2) }
+        val hs = FloatArray(t) { get(it, 3) }
+        Log.d("YOLO", "$tag cx=${xs.joinToString(limit = t)}")
+        Log.d("YOLO", "$tag cy=${ys.joinToString(limit = t)}")
+        Log.d("YOLO", "$tag w =${ws.joinToString(limit = t)}")
+        Log.d("YOLO", "$tag h =${hs.joinToString(limit = t)}")
+    }
 }

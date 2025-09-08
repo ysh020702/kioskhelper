@@ -11,6 +11,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.example.kioskhelper.utils.YuvToRgbConverter
+import com.example.kioskhelper.vision.IconRoleClassifier
 import com.example.kioskhelper.vision.TfliteTaskObjectDetector
 import com.example.kioskhelper.vision.YoloV8TfliteInterpreter
 import java.util.concurrent.Executors
@@ -30,6 +31,7 @@ fun setupCamera(
     overlayView: DetectionOverlayView,
     lifecycleOwner: LifecycleOwner,
     detector: YoloV8TfliteInterpreter,
+    roleClf: IconRoleClassifier,
     throttleMs: Long = 0L
 ) {
     android.util.Log.d("SETUP", "setupCamera() called")
@@ -55,6 +57,7 @@ fun setupCamera(
             overlayView = overlayView,
             detector = detector,                   // ⬅️ Hilt @Singleton을 상위에서 주입받아 전달
             yuvConverter = YuvToRgbConverter(previewView.context),
+            roleClf = roleClf,
             throttleMs = throttleMs
         )
 
