@@ -8,9 +8,15 @@ import org.tensorflow.lite.Interpreter
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+private const val TAG = "IconRoleClassifier"
+
 class IconRoleClassifier(ctx: Context, modelAsset: String) {
 
-    private val roles = arrayOf("back","next","confirm","cancel","pay","home","menu","language")
+    private val roles = arrayOf(
+        "add", "arrow_down", "arrow_left", "arrow_right", "arrow_up",
+        "barcode", "brightness", "close",
+        "delete", "home", "menu", "minus", "qr_code", "scroll_bar"
+    )
     private val interpreter: Interpreter = Interpreter(Utils.loadModel(ctx, modelAsset))
 
     init {
@@ -20,38 +26,40 @@ class IconRoleClassifier(ctx: Context, modelAsset: String) {
         val inShape = inTensor.shape()   // ex) [1, 640, 640, 3]
         val outShape = outTensor.shape() // ex) [1, 8]  or  [1, 5, 8400]
 
-        Log.d("RoleClf", "IN  shape=${inShape.contentToString()}, type=${inTensor.dataType()}")
-        Log.d("RoleClf", "OUT shape=${outShape.contentToString()}, type=${outTensor.dataType()}")
-/*
-        // 선택: 분류기 강제 검증(roles.size=8 가정)
-        val expected = roles.size
-        require(outShape.size == 2 && outShape[0] == 1 && outShape[1] == expected) {
-            "Role classifier expected OUT=[1,$expected], but got ${outShape.contentToString()} — " +
-                    "확인: icon16.tflite가 탐지기(예: YOLO)로 잘못 들어오지 않았는지, Utils.loadModel이 올바른 Asset을 여는지"
-        }*/
+        Log.d(TAG, "IN  shape=${inShape.contentToString()}, type=${inTensor.dataType()}")
+        Log.d(TAG, "OUT shape=${outShape.contentToString()}, type=${outTensor.dataType()}")
+
     }
 
 
-
     fun predictRole(crop: Bitmap): String {
-        // 1) 모델 입력 스펙 읽기
+        // ── 0) 스펙 읽기 ─────────────────────────────────────────────
         val inTensor = interpreter.getInputTensor(0)
-
         val outTensor = interpreter.getOutputTensor(0)
-        val outShape = outTensor.shape()
-        require(outShape.size == 2 && outShape[0] == 1 && outShape[1] == roles.size) {
-            "Loaded model is not a role classifier. Expected [1, ${roles.size}], got ${outShape.contentToString()}."
+
+        val inShape = inTensor.shape()   // [1,H,W,3] or [1,3,H,W]
+        val outShape = outTensor.shape() // [1, numLogits]
+        val inType = inTensor.dataType()
+        val outType = outTensor.dataType()
+
+        val isNHWC = (inShape.size == 4 && inShape[3] == 3)
+        val isNCHW = (inShape.size == 4 && inShape[1] == 3)
+        require(isNHWC || isNCHW) { "Unsupported input shape: ${inShape.contentToString()}" }
+
+        val inH = if (isNHWC) inShape[1] else inShape[2]
+        val inW = if (isNHWC) inShape[2] else inShape[3]
+
+        require(outShape.size == 2 && outShape[0] == 1) {
+            "Unexpected output shape: ${outShape.contentToString()}"
+        }
+        val numLogits = outShape[1]
+        if (numLogits != roles.size) {
+            Log.w(TAG, "roles.size=${roles.size} != logits=$numLogits; overflow는 'unknown' 처리")
         }
 
-
-
-        val inShape = inTensor.shape()        // [1, H, W, 3]
-        val inType  = inTensor.dataType()
-        val inH = inShape[1]; val inW = inShape[2]
-
-        // 2) 비율 유지 resize(레터박스)로 왜곡 최소화
+        // ── 1) 레터박스 리사이즈 ─────────────────────────────────────
         fun letterboxToSize(src: Bitmap, dstW: Int, dstH: Int): Bitmap {
-            val r = kotlin.math.min(dstW.toFloat()/src.width, dstH.toFloat()/src.height)
+            val r = kotlin.math.min(dstW.toFloat() / src.width, dstH.toFloat() / src.height)
             val nw = (src.width * r).toInt().coerceAtLeast(1)
             val nh = (src.height * r).toInt().coerceAtLeast(1)
             val resized = Bitmap.createScaledBitmap(src, nw, nh, true)
@@ -63,75 +71,98 @@ class IconRoleClassifier(ctx: Context, modelAsset: String) {
             c.drawBitmap(resized, dx, dy, null)
             return out
         }
+
         val x = letterboxToSize(crop, inW, inH)
 
-        // 3) 입력 버퍼 작성 (float32/uint8 모두 대응)
+        // ── 2) 입력 버퍼 작성 (FLOAT32/UINT8 × NHWC/NCHW 모두 대응) ──  (수정함)
         val input: Any = when (inType) {
             org.tensorflow.lite.DataType.FLOAT32 -> {
-                val buf = java.nio.ByteBuffer.allocateDirect(4 * inW * inH * 3)
-                    .order(java.nio.ByteOrder.nativeOrder())
+                val buf = ByteBuffer.allocateDirect(4 * inW * inH * 3)
+                    .order(ByteOrder.nativeOrder())
                 val px = IntArray(inW * inH)
                 x.getPixels(px, 0, inW, 0, 0, inW, inH)
-                var i = 0
-                while (i < px.size) {
-                    val p = px[i++]
-                    val r = ((p ushr 16) and 0xFF) / 255f
-                    val g = ((p ushr  8) and 0xFF) / 255f
-                    val b = ( p         and 0xFF) / 255f
-                    // 기존 코드와 동일한 정규화: (x-0.5)/0.5 → [-1,1]
-                    buf.putFloat((r - 0.5f) / 0.5f)
-                    buf.putFloat((g - 0.5f) / 0.5f)
-                    buf.putFloat((b - 0.5f) / 0.5f)
+                fun norm(v: Float) = (v - 0.5f) / 0.5f // 너가 쓰던 정규화 유지
+
+                if (isNHWC) {
+                    var i = 0
+                    for (y in 0 until inH) for (xx in 0 until inW) {
+                        val p = px[i++]
+                        val r = ((p ushr 16) and 0xFF) / 255f
+                        val g = ((p ushr 8) and 0xFF) / 255f
+                        val b = (p and 0xFF) / 255f
+                        buf.putFloat(norm(r)); buf.putFloat(norm(g)); buf.putFloat(norm(b))
+                    }
+                } else { // NCHW: [C,H,W]
+                    for (c in 0..2) for (y in 0 until inH) for (xx in 0 until inW) {
+                        val p = px[y * inW + xx]
+                        val r = ((p ushr 16) and 0xFF) / 255f
+                        val g = ((p ushr 8) and 0xFF) / 255f
+                        val b = (p and 0xFF) / 255f
+                        val v = when (c) {
+                            0 -> r; 1 -> g; else -> b
+                        }
+                        buf.putFloat(norm(v))
+                    }
                 }
-                buf.rewind()
-                buf
+                buf.rewind(); buf
             }
+
             org.tensorflow.lite.DataType.UINT8 -> {
-                val buf = java.nio.ByteBuffer.allocateDirect(inW * inH * 3)
-                    .order(java.nio.ByteOrder.nativeOrder())
+                val buf = ByteBuffer.allocateDirect(inW * inH * 3)
+                    .order(ByteOrder.nativeOrder())
                 val px = IntArray(inW * inH)
                 x.getPixels(px, 0, inW, 0, 0, inW, inH)
-                var i = 0
-                while (i < px.size) {
-                    val p = px[i++]
-                    buf.put(((p ushr 16) and 0xFF).toByte())
-                    buf.put(((p ushr  8) and 0xFF).toByte())
-                    buf.put(( p         and 0xFF).toByte())
+
+                if (isNHWC) {
+                    var i = 0
+                    for (y in 0 until inH) for (xx in 0 until inW) {
+                        val p = px[i++]
+                        buf.put(((p ushr 16) and 0xFF).toByte())
+                        buf.put(((p ushr 8) and 0xFF).toByte())
+                        buf.put((p and 0xFF).toByte())
+                    }
+                } else { // NCHW
+                    for (c in 0..2) for (y in 0 until inH) for (xx in 0 until inW) {
+                        val p = px[y * inW + xx]
+                        val v = when (c) {
+                            0 -> (p ushr 16) and 0xFF
+                            1 -> (p ushr 8) and 0xFF
+                            else -> p and 0xFF
+                        }
+                        buf.put(v.toByte())
+                    }
                 }
-                buf.rewind()
-                buf
+                buf.rewind(); buf
             }
+
             else -> error("Unsupported input dtype: $inType")
         }
 
-        // 4) 출력 버퍼 준비 (출력 차원 안전 처리)
-       // val outTensor = interpreter.getOutputTensor(0)
-        val outType = outTensor.dataType()
-        //val outShape = outTensor.shape() // 보통 [1, numClasses]
+        // ── 3) 출력 버퍼 준비 ────────────────────────────────────────
         val outBuf: Any = when (outType) {
-            org.tensorflow.lite.DataType.FLOAT32 -> Array(outShape[0]) { FloatArray(outShape[1]) }
-            org.tensorflow.lite.DataType.UINT8   -> Array(outShape[0]) { ByteArray(outShape[1]) }
+            org.tensorflow.lite.DataType.FLOAT32 -> Array(1) { FloatArray(numLogits) }
+            org.tensorflow.lite.DataType.UINT8 -> Array(1) { ByteArray(numLogits) }
             else -> error("Unsupported output dtype: $outType")
         }
 
-        // 5) 추론
+        // ── 4) 추론 ──────────────────────────────────────────────────
         interpreter.run(input, outBuf)
 
-        // 6) argmax
+        // ── 5) argmax ────────────────────────────────────────────────
         val scores: FloatArray = when (outType) {
             org.tensorflow.lite.DataType.FLOAT32 -> (outBuf as Array<FloatArray>)[0]
-            org.tensorflow.lite.DataType.UINT8   -> {
+            org.tensorflow.lite.DataType.UINT8 -> {
                 val arr = (outBuf as Array<ByteArray>)[0]
                 FloatArray(arr.size) { (arr[it].toInt() and 0xFF) / 255f }
             }
+
             else -> error("Unsupported output dtype: $outType")
         }
 
         var bi = 0
         for (i in 1 until scores.size) if (scores[i] > scores[bi]) bi = i
 
-        // roles 개수와 출력 차원이 달라도 안전하게
-        return if (bi in roles.indices) roles[bi] else roles.getOrElse(bi.coerceAtMost(roles.lastIndex)) { "unknown" }
+        return if (bi in roles.indices) roles[bi]
+        else roles.getOrElse(bi.coerceAtMost(roles.lastIndex)) { "unknown" }
     }
-
 }
