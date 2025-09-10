@@ -1,5 +1,6 @@
 package com.example.kioskhelper.core
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.RectF
 import com.example.kioskhelper.vision.IconRoleClassifier
@@ -11,6 +12,7 @@ import com.example.kioskhelper.presentation.overlayview.DetectionOverlayView
 
 
 class RealtimeKioskPipeline(
+    private val context: Context,
     private val overlay: DetectionOverlayView,
     private val detector: YoloTfliteDetector,
     private val tracker: SimpleTracker,
@@ -29,7 +31,7 @@ class RealtimeKioskPipeline(
     )
 
 
-    private val rag = RagMatcher()
+    private val rag = RagMatcher(context)
     private var frameCount = 0
     private var lastButtons = mutableListOf<ButtonDet>()
     private val DETECT_INTERVAL = 3
@@ -70,12 +72,9 @@ class RealtimeKioskPipeline(
     }
 
 
-    fun ragLive(stt: String) = rag.match(stt, lastButtons)
-    fun ragFinal(stt: String) = rag.match(stt, lastButtons)
-
+    fun findBestMatchFor(stt: String): MatchResult = rag.findBestMatch(stt, lastButtons)
 
     fun labelOf(b: ButtonDet): String = b.text ?: (b.role ?: "")
-
 
     fun forceRedetect() {
         tracker.reset()

@@ -1,7 +1,9 @@
 package com.example.kioskhelper.presentation.kiosk
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.kioskhelper.MiniLMMatcher
 import com.example.kioskhelper.domain.repository.SttRepository
 import com.example.kioskhelper.domain.repository.TtsRepository
 import com.example.kioskhelper.domain.usecase.stt.*
@@ -11,8 +13,11 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+
+
 @HiltViewModel
 class KioskViewModel @Inject constructor(
+    private val appContext: Context,
     // STT
     private val cancelStt: CancelSttUseCase,
     private val destroyStt: DestroySttUseCase,
@@ -218,7 +223,7 @@ class KioskViewModel @Inject constructor(
     }
 
     // ── 임시 RAG 매칭(키워드/태그) : 나중에 교체 ──────────────────────────
-    private fun matchAndHighlight(query: String, buttons: List<UiButton>): List<Int> {
+    /*private fun matchAndHighlight(query: String, buttons: List<UiButton>): List<Int> {
         if (buttons.isEmpty()) return emptyList()
         val q = query.trim()
         data class Scored(val id: Int, val s: Int)
@@ -240,7 +245,16 @@ class KioskViewModel @Inject constructor(
             (top[0].s - top[1].s) >= 2 -> listOf(top[0].id)
             else -> listOf(top[0].id, top[1].id) // 모호 → Top-2
         }
+    }*/
+
+    // ── KioskViewModel 내부 ────────────────────────────────────────────────
+
+    private val miniLmMatcher = MiniLMMatcher(appContext)
+
+    private fun matchAndHighlight(query: String, buttons: List<UiButton>): List<Int> {
+        return miniLmMatcher.matchAndHighlight(query, buttons)
     }
+
 
     // 작은 확장 헬퍼
     private inline fun <T> MutableStateFlow<T>.update(block: (T) -> T) { value = block(value) }
