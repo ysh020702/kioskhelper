@@ -63,4 +63,5 @@ object VisionModule {
     ): IconRoleClassifier {
         return IconRoleClassifier(context, modelAsset)
     }
+
 }
