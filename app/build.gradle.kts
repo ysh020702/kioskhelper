@@ -39,7 +39,6 @@ android {
     buildFeatures {
         compose = true
     }
-    aaptOptions { noCompress("tflite") } // tflite 원본 유지
 }
 hilt{
     enableAggregatingTask = false

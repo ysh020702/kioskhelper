@@ -44,8 +44,6 @@ class YoloV8TfliteInterpreter(
         outType = outTensor.dataType()
         outShape = outTensor.shape()
 
-        Log.d("YOLO", "IN  type=$inType, shape=${interpreter.getInputTensor(0).shape().contentToString()}")
-        Log.d("YOLO", "OUT type=$outType, shape=${outShape.contentToString()}")
     }
 
     fun detect(src: Bitmap): List<YoloDet> {
@@ -72,17 +70,28 @@ class YoloV8TfliteInterpreter(
             else -> emptyList()
         }
 
-        Log.d("YOLO", "rawTopN01=" + detsInputSpace.sortedByDescending { it.score }
-            .take(3).joinToString { "s=%.3f rect=%s".format(it.score, it.rect.toShortString()) })
-
         val mapped = detsInputSpace
             .map { it.copy(rect = unletterbox(it.rect, prep, src.width, src.height)) }
             .filter { it.rect.width() >= 1f && it.rect.height() >= 1f }
 
-        Log.d("YOLO", "mappedTopPx=" + mapped.sortedByDescending { it.score }
-            .take(3).joinToString { "s=%.3f rect=%s".format(it.score, it.rect.toShortString()) })
+        // 🔽🔽🔽 “진짜 버튼만” 남기기: 버튼 특화 후처리 필터 체인 적용
+        val params = DetFilterParams(
+            scoreThresh = max(confThresh, 0.54f), // 디버깅용 confThresh가 낮아도 최소 0.35는 유지
+            minRelArea = 0.0012f,
+            maxRelArea = 0.60f,
+            minAspect = 0.4f,
+            maxAspect = 2.5f,
+            nmsIou = iouThresh,
+            keepTopK = 50,
+            // allowClasses = setOf( /* 버튼/아이콘 클래스 id */ ),
+            // classThresh = mapOf( /* clsId to thresh */ )
+        )
+        val filtered = filterForButtons(mapped, src.width, src.height, params)
 
-        return mapped
+        Log.d("YOLO", "afterFilterTop=" + filtered.sortedByDescending { it.score }
+            .joinToString { "s=%.3f rect=%s\n".format(it.score, it.rect.toShortString()) })
+
+        return filtered
     }
 
     // ───────────── 전처리/후처리 유틸 ─────────────
@@ -242,7 +251,7 @@ class YoloV8TfliteInterpreter(
                     var best = -Float.MAX_VALUE
                     var bestIdx = -1
                     for (ci in 4 until 84) {
-                        val v = sigmoid(get(i, ci))
+                        val v = asProb(get(i, ci))
                         if (v > best) { best = v; bestIdx = ci - 4 }
                     }
                     if (best >= confThresh) {
@@ -263,7 +272,7 @@ class YoloV8TfliteInterpreter(
                     var best = -Float.MAX_VALUE
                     var bestIdx = -1
                     for (ci in 5 until 85) {
-                        val v = sigmoid(get(i, ci))
+                        val v = asProb(get(i, ci))
                         if (v > best) { best = v; bestIdx = ci - 5 }
                     }
                     val s = obj * best
@@ -304,16 +313,18 @@ class YoloV8TfliteInterpreter(
     }
 
     private fun iou(a: RectF, b: RectF): Float {
-        val x1 = max(a.left, b.left)
-        val y1 = max(a.top, b.top)
-        val x2 = min(a.right, b.right)
-        val y2 = min(a.bottom, b.bottom)
-        val inter = max(0f, x2 - x1) * max(0f, y2 - y1)
-        val uni = a.width() * a.height() + b.width() * b.height() - inter
-        return if (uni <= 0f) 0f else inter / uni
+        val ix = maxOf(0f, min(a.right, b.right) - max(a.left, b.left))
+        val iy = maxOf(0f, min(a.bottom, b.bottom) - max(a.top, b.top))
+        val inter = ix * iy
+        if (inter <= 0f) return 0f
+        val ua = a.width() * a.height() + b.width() * b.height() - inter
+        return if (ua > 0f) inter / ua else 0f
     }
 
     private fun sigmoid(x: Float) = (1f / (1f + exp(-x)))
+
+    private fun looksProb(v: Float) = v in -0.001f..1.001f   // 느슨한 체크
+    private fun asProb(x: Float): Float = if (looksProb(x)) x else sigmoid(x)
 
     private fun dumpRange(get: (Int, Int) -> Float, n: Int, tag: String, take: Int = 10) {
         val t = min(n, take)
@@ -325,5 +336,51 @@ class YoloV8TfliteInterpreter(
         Log.d("YOLO", "$tag cy=${ys.joinToString(limit = t)}")
         Log.d("YOLO", "$tag w =${ws.joinToString(limit = t)}")
         Log.d("YOLO", "$tag h =${hs.joinToString(limit = t)}")
+    }
+
+    //------------필터링 유틸-------
+    private fun filterForButtons(
+        raw: List<YoloDet>, imgW: Int, imgH: Int, p: DetFilterParams
+    ): List<YoloDet> {
+        if (raw.isEmpty()) return emptyList()
+        val frameArea = imgW.toFloat() * imgH.toFloat()
+        val minArea = frameArea * p.minRelArea
+        val maxArea = frameArea * p.maxRelArea
+
+        // 1) 크기/비율/경계 + (옵션)클래스/점수 컷
+        val f1 = raw.filter { d ->
+            val r = d.rect
+            val w = r.width(); val h = r.height()
+            val area = w * h
+            if (area < minArea || area > maxArea) return@filter false
+
+            val asp = if (h > 0f) w / h else 999f
+            if (asp < p.minAspect || asp > p.maxAspect) return@filter false
+
+            if (r.left <= p.borderPx || r.top <= p.borderPx ||
+                r.right >= imgW - p.borderPx || r.bottom >= imgH - p.borderPx) {
+                // 경계에 걸친 작은 박스는 더 높은 신뢰도 요구
+                if (d.score < (p.scoreThresh + 0.1f)) return@filter false
+            }
+
+            if (p.allowClasses != null && d.cls !in p.allowClasses) return@filter false
+            val thr = p.classThresh[d.cls] ?: p.scoreThresh
+            d.score >= thr
+        }
+        if (f1.isEmpty()) return emptyList()
+
+        // 2) NMS
+        val sorted = f1.sortedByDescending { it.score }
+        val kept = ArrayList<YoloDet>(sorted.size)
+        for (c in sorted) {
+            var ok = true
+            for (k in kept) {
+                if (iou(c.rect, k.rect) >= p.nmsIou) { ok = false; break }
+            }
+            if (ok) kept.add(c)
+        }
+
+        // 3) Top-K
+        return kept.take(p.keepTopK)
     }
 }

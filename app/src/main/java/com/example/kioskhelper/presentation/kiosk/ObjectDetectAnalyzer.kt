@@ -14,12 +14,13 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import dagger.hilt.android.scopes.ActivityRetainedScoped
+import dagger.hilt.android.scopes.ActivityScoped
 import javax.inject.Inject
 import kotlin.math.max
 import kotlin.math.min
 
 
-@ActivityRetainedScoped
+@ActivityScoped
 class ObjectDetectAnalyzer @Inject constructor(
     private val previewView: PreviewView,             // 런타임 전달
     private val overlayView: DetectionOverlayView,    // 런타임 전달
@@ -115,9 +116,9 @@ class ObjectDetectAnalyzer @Inject constructor(
             val rotated = if (rot != 0) rotate(src, rot) else src
             if (rot != 0) src.recycle()
 
-            // YOLO 탐지
-            var dets = detector.detect(rotated)
-            dets = dets.sortedByDescending { it.score }.take(20)
+            // YOLO 탐지!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            val dets = detector.detect(rotated)
+            // YOLO 탐지!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
             val frameId = frameSeq.incrementAndGet()
 
@@ -126,11 +127,11 @@ class ObjectDetectAnalyzer @Inject constructor(
                 ButtonBox(id = i, rect = d.rect, ocrLabel = null, iconLabel = null)
             }
 
+           var overlayRaised = false
             overlayView.post {
-                // 오버레이가 항상 위에 오도록 (최초 1회만 실행돼도 OK)
-                try {
-                    overlayView.bringToFront()
-                } catch (_: Throwable) {
+                if (!overlayRaised) {
+                    try { overlayView.bringToFront() } catch (_: Throwable) {}
+                    overlayRaised = true                   // ✅ 최초 1회만
                 }
                 overlayView.setSourceSize(rotated.width, rotated.height)
                 overlayView.submitBoxes(primeList)
@@ -144,6 +145,7 @@ class ObjectDetectAnalyzer @Inject constructor(
             // ❷ 라벨링: 각 박스 OCR → 실패 시 아이콘, 결과 들어올 때마다 업데이트
             if (dets.isEmpty()) {
                 inFlight.set(false)
+                rotated.let { if (!it.isRecycled) it.recycle() }
                 return
             }
 
@@ -250,6 +252,7 @@ class ObjectDetectAnalyzer @Inject constructor(
                 overlayView.invalidate()
             }
             inFlight.set(false)
+
         } finally {
             image.close()
         }
