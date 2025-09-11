@@ -42,6 +42,9 @@ class MiniLMMatcher(context: Context) {
             if (text.isBlank()) continue
 
             val simScore = if (areSimilar(query, text)) 1f else 0f
+
+            Log.d("SimilarityCheck", "Query: \"$query\" | Button: \"$text\" | Similarity: $simScore")
+
             if (simScore >= 1f) {
                 results.add(b.id to simScore)
             }
