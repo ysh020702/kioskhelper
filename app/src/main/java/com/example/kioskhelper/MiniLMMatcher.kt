@@ -32,7 +32,7 @@ class MiniLMMatcher(context: Context) {
             if (text.isBlank()) continue
             val btnEmb = embed(text)
             val sim = cosineSimilarity(queryEmb, btnEmb)
-            if (sim >= 0.7f) results.add(b.id to sim)
+            if (sim >= 0.0f) results.add(b.id to sim)
         }
 
         return results.sortedByDescending { it.second }.map { it.first }

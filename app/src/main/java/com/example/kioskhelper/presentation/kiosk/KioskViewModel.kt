@@ -250,12 +250,11 @@ class KioskViewModel @Inject constructor(
 
     // ── KioskViewModel 내부 ────────────────────────────────────────────────
 
-    //private val miniLmMatcher = MiniLMMatcher(appContext)
+    private val miniLmMatcher = MiniLMMatcher(appContext)
 
     private fun matchAndHighlight(query: String, buttons: List<UiButton>): List<Int> {
-        //return miniLmMatcher.matchAndHighlight(query, buttons)----일단 막음
-        // 👉 지금은 RAG 유사도 매칭을 안 하니까, 그냥 빈 리스트 반환
-        return emptyList()
+        return miniLmMatcher.matchAndHighlight(query, buttons)
+
     }
 
 

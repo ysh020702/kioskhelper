@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import com.example.kioskhelper.presentation.kiosk.screen.BaseActivity
 import com.example.kioskhelper.presentation.kiosk.screen.KioskScreen
 import com.example.kioskhelper.vision.TfliteTaskObjectDetector
 import com.example.kioskhelper.vision.YoloV8TfliteInterpreter
@@ -12,7 +13,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class KioskActivity : ComponentActivity() {
+class KioskActivity : BaseActivity() {
 
     @Inject lateinit var detector: YoloV8TfliteInterpreter
     private val requestPermissions =
