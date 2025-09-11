@@ -91,4 +91,8 @@ dependencies {
     ksp(libs.hilt.compiler)                // ← KSP
     implementation(libs.hilt.nav.compose)  // hiltViewModel()
 
+    implementation(libs.androidx.compose.material3)
+
+    implementation(libs.androidx.compose.icons.core)
+    implementation(libs.androidx.compose.icons.extended)
 }

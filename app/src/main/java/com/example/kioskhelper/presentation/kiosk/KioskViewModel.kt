@@ -52,8 +52,16 @@ class KioskViewModel @Inject constructor(
         val buttons: List<ButtonBox> = emptyList()
     )
 
+    // UI 단발 이벤트
+    sealed class ToastEvent {
+        data class ShowToast(val message: String) : ToastEvent()
+    }
+
     private val _ui = MutableStateFlow(UiState())
     val ui: StateFlow<UiState> = _ui.asStateFlow()
+
+    private val _toast = MutableSharedFlow<ToastEvent>()
+    val toast = _toast.asSharedFlow()
 
     // ── 내부 상태 ──────────────────────────────────────────────────────────
     private var isListening = false
@@ -162,6 +170,7 @@ class KioskViewModel @Inject constructor(
                 // 종료 후 안내(마이크와 충돌 없음)
                 viewModelScope.launch {
                     enqueueSpeak("‘$topLabel’ 버튼을 강조했어요.")
+                    _toast.emit(ToastEvent.ShowToast("‘$topLabel’ 버튼을 강조했어요."))
                 }
             } else {
                 _ui.update { it.copy(highlightedIds = emptyList()) }
