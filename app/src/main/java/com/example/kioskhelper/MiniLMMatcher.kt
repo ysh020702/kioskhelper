@@ -2,6 +2,7 @@ package com.example.kioskhelper
 
 import android.content.Context
 import ai.onnxruntime.*
+import com.example.kioskhelper.presentation.model.ButtonBox
 import kotlin.math.sqrt
 
 class MiniLMMatcher(context: Context) {
@@ -21,18 +22,18 @@ class MiniLMMatcher(context: Context) {
         }
     }
 
-    fun matchAndHighlight(query: String, buttons: List<com.example.kioskhelper.presentation.kiosk.KioskViewModel.UiButton>): List<Int> {
+    fun matchAndHighlight(query: String, buttons: List<ButtonBox>): List<Int> {
         if (buttons.isEmpty() || query.isBlank()) return emptyList()
 
         val queryEmb = embed(query)
         val results = mutableListOf<Pair<Int, Float>>()
 
         for (b in buttons) {
-            val text = b.text.orEmpty()
+            val text = b.displayLabel.orEmpty()
             if (text.isBlank()) continue
             val btnEmb = embed(text)
             val sim = cosineSimilarity(queryEmb, btnEmb)
-            if (sim >= 0.0f) results.add(b.id to sim)
+            if (sim >= 0.6f) results.add(b.id to sim)
         }
 
         return results.sortedByDescending { it.second }.map { it.first }
@@ -52,9 +53,11 @@ class MiniLMMatcher(context: Context) {
             )
         )
 
-        val output = result[0].value as Array<FloatArray>
-        return output[0]
+        @Suppress("UNCHECKED_CAST")
+        val output = result[0].value as Array<Array<FloatArray>>
+        return output[0][0]
     }
+
 
     private fun simpleTokenize(text: String, maxLength: Int): LongArray {
         val tokens: List<Long> = text

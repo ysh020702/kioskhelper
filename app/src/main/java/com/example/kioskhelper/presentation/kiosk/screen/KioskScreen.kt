@@ -75,7 +75,8 @@ fun KioskScreen(
                             lifecycleOwner = lifecycleOwner,   // LocalLifecycleOwner.current
                             detector = visionVm.detector,               // Hilt @Singleton 주입된 인스턴스
                             roleClf = visionVm.roleClf,
-                            throttleMs = 100L                    // 필요 시 120L 등으로 조절
+                            kioskViewModel=kioskVm,
+                            throttleMs = 0                    // 필요 시 120L 등으로 조절
                         )
                     },
                     highlightIds = ui.highlightedIds,

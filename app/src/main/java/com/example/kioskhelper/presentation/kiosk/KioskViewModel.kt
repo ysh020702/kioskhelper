@@ -1,6 +1,7 @@
 package com.example.kioskhelper.presentation.kiosk
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.kioskhelper.MiniLMMatcher
@@ -8,6 +9,7 @@ import com.example.kioskhelper.domain.repository.SttRepository
 import com.example.kioskhelper.domain.repository.TtsRepository
 import com.example.kioskhelper.domain.usecase.stt.*
 import com.example.kioskhelper.domain.usecase.tts.*
+import com.example.kioskhelper.presentation.model.ButtonBox
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -38,7 +40,6 @@ class KioskViewModel @Inject constructor(
 ) : ViewModel() {
 
     // ── UI 모델 ────────────────────────────────────────────────────────────
-    data class UiButton(val id: Int, val text: String?, val iconTags: List<String> = emptyList())
     data class UiState(
         val listening: Boolean = false,           // 듣는 중(토글 ON)
         val statusDotOn: Boolean = false,         // 우상단 초록 점
@@ -48,7 +49,7 @@ class KioskViewModel @Inject constructor(
         val sttError: String? = null,
         val ttsSpeaking: Boolean = false,
         val highlightedIds: List<Int> = emptyList(),
-        val buttons: List<UiButton> = emptyList()
+        val buttons: List<ButtonBox> = emptyList()
     )
 
     private val _ui = MutableStateFlow(UiState())
@@ -60,8 +61,17 @@ class KioskViewModel @Inject constructor(
     private var lastPartial: String? = null
 
     // ── 외부(카메라/탐지)에서 버튼 세트 주입 ─────────────────────────────
-    fun setDetectedButtons(buttons: List<UiButton>) {
+    fun setDetectedButtons(buttons: List<ButtonBox>) {
         _ui.update { it.copy(buttons = buttons) }
+        /*buttons.forEach { button ->
+            Log.d("MatchAndHighlight", "Button name: ${button.displayLabel}")
+        }*/
+        // 버튼이 바뀌면 현재 텍스트로 매칭 재시도
+        val query = ui.value.partialText.ifBlank { ui.value.finalText }
+        if (query.isNotBlank()) {
+            val ids = matchAndHighlight(query, buttons)
+            _ui.update { it.copy(highlightedIds = ids) }
+        }
     }
 
     // ── 토글: 한 번 누르면 시작/종료 ──────────────────────────────────────
@@ -146,7 +156,7 @@ class KioskViewModel @Inject constructor(
             val ids = matchAndHighlight(text, ui.value.buttons)
             if (ids.isNotEmpty()) {
                 val topId = ids.first()
-                val topLabel = ui.value.buttons.firstOrNull { it.id == topId }?.text ?: "해당 버튼"
+                val topLabel = ui.value.buttons.firstOrNull { it.id == topId }?.displayLabel ?: "해당 버튼"
                 _ui.update { it.copy(highlightedIds = listOf(topId)) }
 
                 // 종료 후 안내(마이크와 충돌 없음)
@@ -252,7 +262,10 @@ class KioskViewModel @Inject constructor(
 
     private val miniLmMatcher = MiniLMMatcher(appContext)
 
-    private fun matchAndHighlight(query: String, buttons: List<UiButton>): List<Int> {
+    private fun matchAndHighlight(query: String, buttons: List<ButtonBox>): List<Int> {
+        buttons.forEach { button ->
+            Log.d("MatchAndHighlight", "Button name: ${button.displayLabel}")
+        }
         return miniLmMatcher.matchAndHighlight(query, buttons)
 
     }
