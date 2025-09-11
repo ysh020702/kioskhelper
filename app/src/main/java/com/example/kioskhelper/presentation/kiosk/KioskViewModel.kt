@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class KioskViewModel @Inject constructor(
-    private val appContext: Context,
+    @ApplicationContext private val appContext: Context,
     // STT
     private val cancelStt: CancelSttUseCase,
     private val destroyStt: DestroySttUseCase,
