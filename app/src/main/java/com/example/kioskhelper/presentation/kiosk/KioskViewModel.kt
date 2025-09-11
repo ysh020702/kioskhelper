@@ -9,6 +9,7 @@ import com.example.kioskhelper.domain.repository.TtsRepository
 import com.example.kioskhelper.domain.usecase.stt.*
 import com.example.kioskhelper.domain.usecase.tts.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -249,10 +250,12 @@ class KioskViewModel @Inject constructor(
 
     // ── KioskViewModel 내부 ────────────────────────────────────────────────
 
-    private val miniLmMatcher = MiniLMMatcher(appContext)
+    //private val miniLmMatcher = MiniLMMatcher(appContext)
 
     private fun matchAndHighlight(query: String, buttons: List<UiButton>): List<Int> {
-        return miniLmMatcher.matchAndHighlight(query, buttons)
+        //return miniLmMatcher.matchAndHighlight(query, buttons)----일단 막음
+        // 👉 지금은 RAG 유사도 매칭을 안 하니까, 그냥 빈 리스트 반환
+        return emptyList()
     }
 
 
