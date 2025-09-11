@@ -86,6 +86,7 @@ dependencies {
 
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 
+
     implementation(libs.hilt.core)
     ksp(libs.hilt.compiler)                // ← KSP
     implementation(libs.hilt.nav.compose)  // hiltViewModel()

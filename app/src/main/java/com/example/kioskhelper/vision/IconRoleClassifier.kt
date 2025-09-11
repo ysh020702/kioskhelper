@@ -17,10 +17,22 @@ private const val TAG = "IconRoleClassifier"
 class IconRoleClassifier(ctx: Context, modelAsset: String) {
 
     private val roles = arrayOf(
-        "add", "arrow_down", "arrow_left", "arrow_right", "arrow_up",
-        "barcode", "brightness", "close", "delete", "home",
-        "menu", "minus", "qr_code", "scroll_bar"
+        "추가",           // add
+        "아래로 이동",      // arrow_down
+        "왼쪽으로 이동",     // arrow_left
+        "오른쪽으로 이동",   // arrow_right
+        "위로 이동",        // arrow_up
+        "바코드 스캔",      // barcode
+        "밝기 조절",        // brightness
+        "닫기",            // close
+        "삭제",            // delete
+        "홈으로 이동",       // home
+        "메뉴 열기",        // menu
+        "감소",            // minus
+        "QR코드 스캔",     // qr_code
+        "스크롤 바 이동"     // scroll_bar
     )
+
 
     private val interpreter: Interpreter = Interpreter(Utils.loadModel(ctx, modelAsset))
 
@@ -86,7 +98,7 @@ class IconRoleClassifier(ctx: Context, modelAsset: String) {
         Log.d(TAG, "CALL crop=${crop.width}x${crop.height}, in=${inW}x${inH}, layout=${if (isNCHW) "NCHW" else "NHWC"}, inType=$inType")
 
         // 1) 레터박스 리사이즈 → (inW x inH)
-        val x = letterboxToSize(crop, inW, inH)
+        val x = resizeToSize(crop, inW, inH)
         Log.d(TAG, "RESZ resized=${x.width}x${x.height}")
 
         // 2) 입력 버퍼 작성 (FLOAT32/UINT8 × NHWC/NCHW)
@@ -205,4 +217,10 @@ class IconRoleClassifier(ctx: Context, modelAsset: String) {
         c.drawBitmap(resized, dx, dy, null)
         return out
     }
+
+    private fun resizeToSize(src: Bitmap, dstW: Int, dstH: Int): Bitmap {
+        // 바로 dstW, dstH 크기로 리사이즈
+        return Bitmap.createScaledBitmap(src, dstW, dstH, true)
+    }
+
 }

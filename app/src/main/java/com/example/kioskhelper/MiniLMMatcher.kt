@@ -1,82 +1,99 @@
 package com.example.kioskhelper
 
 import android.content.Context
-import ai.onnxruntime.*
+import android.util.Log
 import com.example.kioskhelper.presentation.model.ButtonBox
-import kotlin.math.sqrt
+import org.json.JSONObject
+import java.nio.charset.Charset
 
 class MiniLMMatcher(context: Context) {
 
-    private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession
-    private val vocab: Map<String, Int>
+    private val similarGroups: List<Set<String>>
 
     init {
-        // ONNX 모델 로드
-        val modelBytes = context.assets.open("minilm.onnx").readBytes()
-        session = env.createSession(modelBytes)
+        // JSON 파일 로드
+        val jsonStr = context.assets.open("similar_words.json").readBytes().toString(Charset.defaultCharset())
+        val json = JSONObject(jsonStr)
+        val groupsArray = json.getJSONArray("groups")
 
-        // vocab.txt 로드
-        vocab = context.assets.open("tokenizer/vocab.txt").bufferedReader().useLines { lines ->
-            lines.mapIndexed { idx, token -> token to idx }.toMap()
+        val tempList = mutableListOf<Set<String>>()
+        for (i in 0 until groupsArray.length()) {
+            val arr = groupsArray.getJSONArray(i)
+            val set = mutableSetOf<String>()
+            for (j in 0 until arr.length()) {
+                set.add(arr.getString(j))
+            }
+            tempList.add(set)
         }
+        similarGroups = tempList
     }
 
+
+    private val threshold = 0.6 // 문자열 유사도 임계값
+
+    /** 버튼과 query 유사도 계산 후 id 반환 */
     fun matchAndHighlight(query: String, buttons: List<ButtonBox>): List<Int> {
         if (buttons.isEmpty() || query.isBlank()) return emptyList()
 
-        val queryEmb = embed(query)
         val results = mutableListOf<Pair<Int, Float>>()
 
         for (b in buttons) {
             val text = b.displayLabel.orEmpty()
             if (text.isBlank()) continue
-            val btnEmb = embed(text)
-            val sim = cosineSimilarity(queryEmb, btnEmb)
-            if (sim >= 0.6f) results.add(b.id to sim)
+
+            val simScore = if (areSimilar(query, text)) 1f else 0f
+
+            Log.d("SimilarityCheck", "Query: \"$query\" | Button: \"$text\" | Similarity: $simScore")
+
+            if (simScore >= 1f) {
+                results.add(b.id to simScore)
+            }
         }
 
         return results.sortedByDescending { it.second }.map { it.first }
     }
 
-    private fun embed(text: String, maxLength: Int = 16): FloatArray {
-        val inputIds = simpleTokenize(text, maxLength)
-        val attentionMask = LongArray(inputIds.size) { 1L }
+    /** 유사도 검사: 그룹 + 문자열 유사도 */
+    private fun areSimilar(a: String, b: String): Boolean {
+        // 동일 문자열 또는 부분 문자열
+        if (a == b || a in b || b in a) return true
 
-        val inputIdsTensor = OnnxTensor.createTensor(env, arrayOf(inputIds))
-        val attentionMaskTensor = OnnxTensor.createTensor(env, arrayOf(attentionMask))
-
-        val result = session.run(
-            mapOf(
-                "input_ids" to inputIdsTensor,
-                "attention_mask" to attentionMaskTensor
-            )
-        )
-
-        @Suppress("UNCHECKED_CAST")
-        val output = result[0].value as Array<Array<FloatArray>>
-        return output[0][0]
-    }
-
-
-    private fun simpleTokenize(text: String, maxLength: Int): LongArray {
-        val tokens: List<Long> = text
-            .split(" ")
-            .map { vocab[it] ?: vocab["[UNK]"] ?: 0 } // Int
-            .map { it.toLong() } // Int -> Long
-        return tokens.take(maxLength).toLongArray() // 이제 LongArray 가능
-    }
-
-
-    private fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {
-        var dot = 0f
-        var normA = 0f
-        var normB = 0f
-        for (i in a.indices) {
-            dot += a[i] * b[i]
-            normA += a[i] * a[i]
-            normB += b[i] * b[i]
+        // JSON 그룹 기반 유사도
+        for (group in similarGroups) {
+            if (a in group && b in group) return true
         }
-        return dot / (sqrt(normA) * sqrt(normB))
+
+        // 문자열 유사도 계산
+        val sim = similarity(a, b)
+        return sim >= threshold
+    }
+
+    /** Levenshtein 기반 문자열 유사도 0~1 */
+    private fun similarity(s1: String, s2: String): Double {
+        val distance = levenshteinDistance(s1, s2)
+        val maxLen = maxOf(s1.length, s2.length)
+        return if (maxLen == 0) 1.0 else 1.0 - distance.toDouble() / maxLen
+    }
+
+    /** Levenshtein Distance 계산 */
+    private fun levenshteinDistance(s: String, t: String): Int {
+        val m = s.length
+        val n = t.length
+        val dp = Array(m + 1) { IntArray(n + 1) }
+
+        for (i in 0..m) dp[i][0] = i
+        for (j in 0..n) dp[0][j] = j
+
+        for (i in 1..m) {
+            for (j in 1..n) {
+                val cost = if (s[i - 1] == t[j - 1]) 0 else 1
+                dp[i][j] = minOf(
+                    dp[i - 1][j] + 1,       // 삭제
+                    dp[i][j - 1] + 1,       // 삽입
+                    dp[i - 1][j - 1] + cost // 교체
+                )
+            }
+        }
+        return dp[m][n]
     }
 }

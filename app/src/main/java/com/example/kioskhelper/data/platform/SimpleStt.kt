@@ -23,12 +23,31 @@ class SimpleStt(
     init { recog.setRecognitionListener(this) }
 
     /** 언어 태그(예: ko-KR, en-US)를 매번 전달받아 인식 시작 */
-    fun start(languageTag: String = "ko-KR") {
+    /*fun start(languageTag: String = "ko-KR") {
         val intent = Intent(baseIntent).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
         }
         recog.startListening(intent)
+    }*/
+
+    fun start(languageTag: String = "ko-KR") {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            // 한국어 기반으로 설정하면 영어 단어도 일부 인식 가능
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR")
+
+            // 자유로운 문장 인식
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+
+            // 부분 결과를 바로바로 받기
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+
+            // 인식 정확도 향상 옵션
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+        }
+
+        recog.startListening(intent)
     }
+
 
     fun stop() = recog.stopListening()
     fun cancel() = recog.cancel()
