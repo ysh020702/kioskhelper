@@ -52,7 +52,7 @@ class MiniLMMatcher(context: Context) {
 
             Log.d("SimilarityCheck", "Button: \"$query\" |Button: \"$text\" | sim=$sim")
 
-            if (sim >= 0.9f) results.add(b.id to sim)
+            if (sim >= 0.8f) results.add(b.id to sim)
         }
 
         return results.sortedByDescending { it.second }.map { it.first }
