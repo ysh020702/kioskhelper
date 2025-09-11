@@ -233,30 +233,6 @@ class KioskViewModel @Inject constructor(
         destroyStt() // 리소스 정리
     }
 
-    // ── 임시 RAG 매칭(키워드/태그) : 나중에 교체 ──────────────────────────
-    /*private fun matchAndHighlight(query: String, buttons: List<UiButton>): List<Int> {
-        if (buttons.isEmpty()) return emptyList()
-        val q = query.trim()
-        data class Scored(val id: Int, val s: Int)
-        val scored = buttons.map { b ->
-            val t = b.text.orEmpty()
-            var s = 0
-            if (t.contains(q)) s += 3
-            if (q.contains("결제") && (t.contains("결제") || b.iconTags.any { it.contains("pay") })) s += 5
-            if (q.contains("다음") && (t.contains("다음") || b.iconTags.any { it.contains("next") })) s += 4
-            if (q.contains("확인") && (t.contains("확인") || b.iconTags.any { it.contains("confirm") })) s += 4
-            if (q.contains("취소") && (t.contains("취소") || b.iconTags.any { it.contains("cancel") })) s += 4
-            Scored(b.id, s)
-        }.sortedByDescending { it.s }
-
-        val top = scored.take(2).filter { it.s > 0 }
-        return when {
-            top.isEmpty() -> emptyList()
-            top.size == 1 -> listOf(top[0].id)
-            (top[0].s - top[1].s) >= 2 -> listOf(top[0].id)
-            else -> listOf(top[0].id, top[1].id) // 모호 → Top-2
-        }
-    }*/
 
     // ── KioskViewModel 내부 ────────────────────────────────────────────────
 
