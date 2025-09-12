@@ -1,10 +1,13 @@
 package com.example.kioskhelper
 
 import android.content.Context
+import android.graphics.RectF
 import android.util.Log
 import com.example.kioskhelper.presentation.model.ButtonBox
 import org.json.JSONObject
 import java.nio.charset.Charset
+import kotlin.math.max
+import kotlin.math.min
 
 class MiniLMMatcher(context: Context) {
 
@@ -29,7 +32,7 @@ class MiniLMMatcher(context: Context) {
     }
 
 
-    private val threshold = 0.6 // 문자열 유사도 임계값
+    private val threshold = 0.8 // 문자열 유사도 임계값
 
     /** 버튼과 query 유사도 계산 후 id 반환 */
     fun matchAndHighlight(query: String, buttons: List<ButtonBox>): List<Int> {
@@ -63,8 +66,8 @@ class MiniLMMatcher(context: Context) {
             if (a in group && b in group) return true
         }
 
-        // 문자열 유사도 계산
-        val sim = similarity(a, b)
+        // 문자열 유사도 계산 (자모 단위 변환 후)
+        val sim = similarity(HangulUtils.decompose(a), HangulUtils.decompose(b))
         return sim >= threshold
     }
 
@@ -96,4 +99,43 @@ class MiniLMMatcher(context: Context) {
         }
         return dp[m][n]
     }
+
+    /** 한글 자모 분해 유틸 */
+    object HangulUtils {
+        private val CHO = listOf(
+            'ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ',
+            'ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'
+        )
+        private val JUNG = listOf(
+            'ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ',
+            'ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'
+        )
+        private val JONG = listOf(
+            ' ','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ',
+            'ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'
+        )
+
+        /** 한글 한 글자를 자모 단위로 분리 */
+        fun decomposeChar(c: Char): String {
+            if (c !in '가'..'힣') return c.toString()
+
+            val base = c.code - 0xAC00
+            val cho = base / (21 * 28)
+            val jung = (base % (21 * 28)) / 28
+            val jong = base % 28
+
+            val sb = StringBuilder()
+            sb.append(CHO[cho])
+            sb.append(JUNG[jung])
+            if (jong != 0) sb.append(JONG[jong])
+            return sb.toString()
+        }
+
+        /** 문자열 전체를 자모 단위로 변환 */
+        fun decompose(str: String): String {
+            return str.flatMap { decomposeChar(it).toList() }.joinToString("")
+        }
+    }
+
 }
+
