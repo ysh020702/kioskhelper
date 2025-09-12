@@ -1,10 +1,13 @@
 package com.example.kioskhelper
 
 import android.content.Context
+import android.graphics.RectF
 import android.util.Log
 import com.example.kioskhelper.presentation.model.ButtonBox
 import org.json.JSONObject
 import java.nio.charset.Charset
+import kotlin.math.max
+import kotlin.math.min
 
 class MiniLMMatcher(context: Context) {
 
@@ -135,3 +138,4 @@ class MiniLMMatcher(context: Context) {
     }
 
 }
+
