@@ -58,7 +58,19 @@ fun KioskScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    StatusDot(on = ui.statusDotOn)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        StatusDot(on = ui.statusDotOn)
+                        Text(
+                            text = "키오스크 도우미",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                            maxLines = 1
+                        )
+                    }
                 },
                 actions = {
                     Column(
@@ -76,10 +88,6 @@ fun KioskScreen(
                             StatusPill(
                                 text = if (ui.ttsSpeaking) "🗣 TTS" else "TTS Off",
                                 tone = if (ui.ttsSpeaking) PillTone.Info else PillTone.Neutral
-                            )
-                            StatusPill(
-                                text = "찾은 버튼: ${ui.highlightedIds.size}개",
-                                tone = if (ui.highlightedIds.size >= 2) PillTone.Warn else PillTone.Neutral
                             )
                         }
                     }
@@ -278,7 +286,7 @@ private fun BottomBarModern(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .height(56.dp),
-            colors = if (finalText.isBlank()) {
+            colors = if (!finalText.isBlank()) {
                 ButtonDefaults.outlinedButtonColors(
                     containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                     contentColor   = MaterialTheme.colorScheme.primary
