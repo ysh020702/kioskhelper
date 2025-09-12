@@ -22,6 +22,931 @@ import kotlin.math.min
 
 @ActivityScoped
 class ObjectDetectAnalyzer @Inject constructor(
+    private val previewView: PreviewView,
+    private val overlayView: DetectionOverlayView,
+    private val detector: YoloV8TfliteInterpreter,
+    private val roleClf: IconRoleClassifier,
+    private val yuvConverter: YuvToRgbConverter,
+    private val kioskViewModel: KioskViewModel,
+    private val throttleMs: Long = 0L
+) : ImageAnalysis.Analyzer {
+
+    private val lastTs = java.util.concurrent.atomic.AtomicLong(0L)
+    private val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val frameSeq = java.util.concurrent.atomic.AtomicLong(0L)
+
+    private val textRecognizer = TextRecognition.getClient(
+        KoreanTextRecognizerOptions.Builder().build()
+    )
+
+    private val enableLabelTrace = true
+    private data class LabelResult(val text: String, val source: String)
+
+    // ── 간이 트래커(프레임 간 라벨 전파)
+    private data class TrackState(val rect: RectF, val ocrLabel: String?, val iconLabel: String?)
+    private var lastTracks: List<TrackState> = emptyList()
+    private fun iou(a: RectF, b: RectF): Float {
+        val ix = max(0f, min(a.right, b.right) - max(a.left, b.left))
+        val iy = max(0f, min(a.bottom, b.bottom) - max(a.top, b.top))
+        val inter = ix * iy
+        if (inter <= 0f) return 0f
+        val areaA = a.width() * a.height()
+        val areaB = b.width() * b.height()
+        return inter / (areaA + areaB - inter)
+    }
+    private fun findPrevFor(rect: RectF, minIou: Float = 0.40f): TrackState? =
+        lastTracks.maxByOrNull { iou(it.rect, rect) }?.takeIf { iou(it.rect, rect) >= minIou }
+
+    // ── ViewModel 부분 업데이트 쓰로틀
+    private var lastVmPushMs = 0L
+    private val VM_PUSH_COOLDOWN_MS = 80L
+    private fun pushVmThrottled(list: List<ButtonBox>) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastVmPushMs >= VM_PUSH_COOLDOWN_MS) {
+            kioskViewModel.setDetectedButtons(list)
+            lastVmPushMs = now
+        }
+    }
+
+    // ── OCR 유틸
+    private fun expandRectToMinSize(
+        r: RectF, minW: Float, minH: Float, padFrac: Float, imgW: Int, imgH: Int
+    ): RectF {
+        val w = r.width(); val h = r.height()
+        val padX = max(w * padFrac, 2f)
+        val padY = max(h * padFrac, 2f)
+        var left = r.left - padX
+        var top = r.top - padY
+        var right = r.right + padX
+        var bottom = r.bottom + padY
+        if (right - left < minW) { val add = (minW - (right - left))/2f; left -= add; right += add }
+        if (bottom - top < minH) { val add = (minH - (bottom - top))/2f; top -= add; bottom += add }
+        left = left.coerceIn(0f, imgW.toFloat()); top = top.coerceIn(0f, imgH.toFloat())
+        right = right.coerceIn(0f, imgW.toFloat()); bottom = bottom.coerceIn(0f, imgH.toFloat())
+        if (right <= left) right = min(imgW.toFloat(), left + minW)
+        if (bottom <= top) bottom = min(imgH.toFloat(), top + minH)
+        return RectF(left, top, right, bottom)
+    }
+
+    private fun upscaleForOcr(src: Bitmap, targetShort: Int = 192, maxLong: Int = 1024): Bitmap {
+        val shortSide = min(src.width, src.height)
+        if (shortSide >= targetShort) return src
+        val scale = targetShort.toFloat() / shortSide
+        val outW = (src.width * scale).toInt().coerceAtMost(maxLong)
+        val outH = (src.height * scale).toInt().coerceAtMost(maxLong)
+        return Bitmap.createScaledBitmap(src, outW, outH, true)
+    }
+
+    private fun preprocessForOcr(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(out)
+        val cm = android.graphics.ColorMatrix().apply { setSaturation(0f) }
+        val contrast = 1.45f
+        val brightness = 12f
+        cm.postConcat(android.graphics.ColorMatrix(floatArrayOf(
+            contrast, 0f,       0f,       0f, brightness,
+            0f,       contrast, 0f,       0f, brightness,
+            0f,       0f,       contrast, 0f, brightness,
+            0f,       0f,       0f,       1f, 0f
+        )))
+        val paint = android.graphics.Paint().apply {
+            colorFilter = android.graphics.ColorMatrixColorFilter(cm)
+            isFilterBitmap = true
+        }
+        canvas.drawBitmap(src, 0f, 0f, paint)
+        return out
+    }
+
+    private fun normalizeOcr(text: String): String {
+        var t = text.replace(Regex("\n+"), " ").trim()
+        t = t.replace('O','0').replace('o','0')
+            .replace('l','1').replace('I','1')
+            .replace('S','5')
+        return t
+    }
+
+    private fun cropBitmap(src: Bitmap, rect: RectF): Bitmap {
+        val left = rect.left.toInt().coerceAtLeast(0)
+        val top = rect.top.toInt().coerceAtLeast(0)
+        val width = rect.width().toInt().coerceAtMost(src.width - left).coerceAtLeast(1)
+        val height = rect.height().toInt().coerceAtMost(src.height - top).coerceAtLeast(1)
+        return Bitmap.createBitmap(src, left, top, width, height)
+    }
+
+    private fun rotate(b: Bitmap, deg: Int): Bitmap {
+        if (deg == 0) return b
+        val m = android.graphics.Matrix().apply { postRotate(deg.toFloat()) }
+        return Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+    }
+
+    // ── 편집거리(메뉴 매칭에만 사용)
+    private fun editDistance(a: String, b: String): Int {
+        val m = a.length; val n = b.length
+        if (m == 0) return n
+        if (n == 0) return m
+        val dp = Array(m + 1) { IntArray(n + 1) }
+        for (i in 0..m) dp[i][0] = i
+        for (j in 0..n) dp[0][j] = j
+        for (i in 1..m) for (j in 1..n) {
+            val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+            dp[i][j] = minOf(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
+        }
+        return dp[m][n]
+    }
+
+    // ── 텍스트 정리/라인 선택
+    private fun hangulScore(s: String): Int {
+        val h = Regex("[가-힣]").findAll(s).count()
+        val d = Regex("[0-9]").findAll(s).count()
+        return h * 2 - d
+    }
+    private fun stripPriceNoise(s: String): String {
+        return s
+            .replace(Regex("\\b\\d{1,3}(,\\d{3})+\\b"), " ")
+            .replace(Regex("\\b\\d+\\s*원\\b"), " ")
+            .replace(Regex("\\b\\d+[!,.]?\\b"), " ")
+            .replace(Regex("[₩$€¥!]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+    private fun pickBestLine(vt: com.google.mlkit.vision.text.Text): String {
+        val lines = mutableListOf<String>()
+        for (b in vt.textBlocks) for (l in b.lines) lines += l.text.trim()
+        if (lines.isEmpty()) return vt.text.trim()
+        val scored = lines.mapIndexed { idx, s -> (hangulScore(s) + (lines.size - idx)) to s }
+        val best = scored.maxByOrNull { it.first }?.second ?: vt.text.trim()
+        return stripPriceNoise(best)
+    }
+
+    // ── 메뉴 카탈로그/매칭 (LEXICON 제거, 메뉴만 유지)
+    private data class MenuEntry(
+        val canonical: String,
+        val aliases: Set<String> = emptySet(),
+        val tags: Set<String> = emptySet()
+    )
+    private fun normForMatch(s: String): String {
+        val t = s.replace(Regex("\\(.*?\\)"), " ")
+            .replace(Regex("[/_,:·]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .replace(Regex("\\d"), "")
+            .trim()
+        return t.replace(" ", "").uppercase()
+    }
+    private fun buildMenuCatalog(rawLines: List<String>): List<MenuEntry> {
+        val catPrefixes = listOf("블록팩", "레디팩")
+        val tagWords = mapOf(
+            "케이크" to setOf("케이크"), "스틱바" to setOf("스틱바"),
+            "모찌" to setOf("모찌"), "모나카" to setOf("모나카"),
+            "바움쿠헨" to setOf("바움쿠헨"), "선데" to setOf("선데"),
+            "빙수" to setOf("빙수","컵빙수"),
+            "블라스트" to setOf("블라스트"), "쉐이크" to setOf("쉐이크"),
+            "라떼" to setOf("라떼"), "아메리카노" to setOf("아메리카노"),
+            "콜드브루" to setOf("콜드브루")
+        )
+        fun extractTags(name: String): Set<String> {
+            val tags = mutableSetOf<String>()
+            for ((k, vs) in tagWords) if (vs.any { name.contains(it) }) tags += k
+            if (Regex("\\(.*?Lessly.*?\\)", RegexOption.IGNORE_CASE).containsMatchIn(name)) tags += "Lessly Edition"
+            return tags
+        }
+        fun genAliases(one: String): Pair<Set<String>, Set<String>> {
+            var base = one.trim()
+            val tags = mutableSetOf<String>()
+            for (p in catPrefixes) if (base.startsWith(p)) { tags += p; base = base.removePrefix(p).trim(); break }
+            val noParen = base.replace(Regex("\\(.*?\\)"), "").trim()
+            fun variants(s: String) = setOf(
+                s, s.replace(" ", ""), s.replace("-", " ").replace(Regex("\\s+"), " ").trim()
+            )
+            val withPrefix = tags.map { "$it $noParen".trim() }.toSet()
+            val alias = variants(noParen) + withPrefix.flatMap { variants(it) }
+            return alias to (tags + extractTags(one))
+        }
+        val entries = mutableListOf<MenuEntry>()
+        for (line in rawLines.map { it.trim() }.filter { it.isNotEmpty() }) {
+            val parts = line.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val first = parts.first()
+            val (aliasSet, tags) = genAliases(first)
+            val moreAliases = parts.drop(1).flatMap { genAliases(it).first }
+            val allAliases = aliasSet + moreAliases
+            val canonical = first
+                .replace(Regex("^블록팩\\s*|^레디팩\\s*"), "")
+                .replace(Regex("\\(.*?\\)"), "")
+                .trim()
+            entries += MenuEntry(canonical = canonical, aliases = allAliases, tags = tags)
+        }
+        return entries
+    }
+    private val RAW_MENU = listOf(
+        "요거트 젤라또","헤이즐넛 젤라또","애플망고 젤라또",
+        "블록팩 레인보우샤베트","블록팩 베리베리스트로베리","블록팩 초콜릿","블록팩 바람과함께사라지다",
+        "블록팩 이상한나라의솜사탕","블록팩 민트초코봉봉","블록팩 뉴욕치즈케이크","블록팩 쿠키앤크림",
+        "블록팩 엄마는외계인","블록팩 아몬드봉봉","블록팩 슈팅스타","블록팩 체리쥬빌레",
+        "레디팩 초코나무 숲","레디팩 31 요거트","레디팩 레인보우 샤베트","레디팩 민트 초콜릿 칩",
+        "레디팩 베리베리 스트로베리","레디팩 소금 우유","레디팩 아몬드 봉봉","레디팩 엄마는 외계인",
+        "레디팩 오레오 쿠키 앤 크림","레디팩 체리쥬빌레",
+
+        "위대한 비쵸비","블루 바나나 브륄레","(Lessly Edition) 아몬드 봉봉","(Lessly Edition) 엄마는 외계인",
+        "트로피컬 썸머 플레이","북극곰 폴라베어","블루 서퍼 비치","아이스 맥심 모카골드","사랑에 빠진 딸기",
+        "피치 요거트","피치 Pang", "망고 Pang","수박 Hero","메롱 멜론","애플 민트","엄마는 외계인",
+        "민트 초콜릿 칩","뉴욕 치즈케이크","레인보우 샤베트","체리쥬빌레","슈팅스타","오레오 쿠키 앤 크림",
+        "베리베리 스트로베리","31요거트","바람과 함께 사라지다","피스타치오 아몬드","초콜릿 무스","그린티",
+        "초콜릿","자모카 아몬드 훠지","아몬드 봉봉","바닐라",
+
+        "(Lessly Edition) 민트 초콜릿 칩 미니 케이크","(Lessly Edition) 엄마는 외계인 미니 케이크",
+        "개구쟁이 스머프 하우스","더 듬뿍 프루티 케이크","더 듬뿍 복숭아 케이크","더 듬뿍 딸기 케이크",
+        "진정한 초콜릿 케이크","진정한 치즈 케이크","진정한 티라미수 케이크","반짝이는 잔망루피",
+        "나눠먹는 와츄원","나눠먹는 큐브 와츄원","골라먹는 27 큐브","해피 버스데이","우주에서 온 엄마는 외계인",
+        "스노우 볼 와츄원","리얼 초코 27 큐브","미니 골라먹는 와츄원","미니 해피 버스데이 케이크",
+
+        "블루 바나나 스틱바","(Lessly Edition) 저당 피치요거트 스틱바","(Lessly Edition) 저당 망고코코넛 스틱바",
+        "अ아이스 바움쿠헨 아몬드봉봉","아이스 바움쿠헨 카페오레","쿠키 크런치 선데","카페 크런치 선데",
+        "더 듬뿍 설향딸기 컵빙수","더 듬뿍 설향딸기 빙수","더 듬뿍 칸탈로프 멜론 컵빙수","더 듬뿍 칸탈로프 멜론 빙수",
+        "더 듬뿍 팥빙수","더 듬뿍 팥 컵빙수","버터 쿠키 샌드 스트로베리","버터 쿠키 샌드 바닐라 카라멜",
+        "그린티 킷캣 선데","अ아이스 마카롱 크림브륄레","아이스 꿀떡","홀리데이 미니 아이스 마카롱","DIY 모나카 세트",
+        "아이스 모찌 밤 티라미수","아몬드봉봉모찌","아이스 모찌 슈크림","맥심 스틱바 슈프림골드","아이스 쿠키 샌드 바닐라",
+        "맥심 스틱바 모카골드 마일드","미니 아이스 스틱바 바닐라","아이스 마카롱 체리쥬빌레","아이스 마카롱 초콜릿 무스",
+        "아이스 마카롱 쿠키앤크림","아이스 모나카 쫀떡 인절미","아이스 모나카 우유","아이스 모찌 소금우유",
+        "아이스 모찌 그린티","아이스 모찌 스트로베리","아이스 모찌 초코바닐라","아이스 모찌 크림치즈",
+
+        "아이스 믹스커피 블라스트","짐빔 하이볼 레몬 블라스트","(Lessly Edition) 쉐이크",
+        "모구모구 블라스트","칸탈로프 멜론 블라스트","수박 블라스트","딸기 찹쌀떡 쉐이크","저당 과일티",
+        "설향딸기 블라스트","요거트 블라스트","카푸치노 블라스트","아이스크림 블라스트","와츄원 쉐이크",
+        "밀크 쉐이크","오레오 쉐이크","납작복숭아 아이스티","딸기 연유 라떼",
+
+        "아메리카노","카페라떼","바닐라빈 라떼","카라멜 마끼아또","엄마는 외계인 카페모카","연유라떼",
+        "카페31","아포가토 라떼","콜드브루 아메리카노","콜드브루 라떼","콜드브루 오트","슈크림 아포가토 블라스트",
+        "슈가밤 커피","슈가밤 블라스트","아포가토"
+    )
+    private val MENU_CATALOG: List<MenuEntry> by lazy { buildMenuCatalog(RAW_MENU) }
+
+    private fun bestMenuMatch(text: String): String? {
+        val q = normForMatch(text)
+        if (q.isBlank()) return null
+        var bestCanon: String? = null
+        var bestDist = Int.MAX_VALUE
+        var bestAliasLen = 0
+        for (e in MENU_CATALOG) for (alias in e.aliases) {
+            val a = normForMatch(alias); if (a.isBlank()) continue
+            val d = editDistance(q, a)
+            if (d < bestDist || (d == bestDist && a.length > bestAliasLen)) {
+                bestDist = d; bestCanon = e.canonical; bestAliasLen = a.length
+            }
+        }
+        val maxAllowed = max(1, (kotlin.math.ceil(q.length * 0.2)).toInt())
+        return if (bestCanon != null && bestDist <= maxAllowed) bestCanon else null
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+
+    override fun analyze(image: ImageProxy) {
+        try {
+            val now = System.currentTimeMillis()
+            if (throttleMs > 0 && now - lastTs.get() < throttleMs) { image.close(); return }
+            lastTs.set(now)
+
+            if (!inFlight.compareAndSet(false, true)) { image.close(); return }
+
+            val src = yuvConverter.toBitmap(image)
+            val rot = image.imageInfo.rotationDegrees
+            val rotated = if (rot != 0) rotate(src, rot) else src
+            if (rot != 0) src.recycle()
+
+            val dets = detector.detect(rotated)
+            val frameId = frameSeq.incrementAndGet()
+
+            // 프라임 드로우(라벨 없이 먼저 그리기)
+            val primeList = dets.mapIndexed { i, d ->
+                ButtonBox(id = i, rect = d.rect, ocrLabel = null, iconLabel = null)
+            }
+            overlayView.post {
+                try { overlayView.bringToFront() } catch (_: Throwable) {}
+                overlayView.setSourceSize(rotated.width, rotated.height)
+                overlayView.submitBoxes(primeList)
+                overlayView.invalidate()
+                android.util.Log.i("ANALYZER_BOXES", "Prime draw ${primeList.size} boxes (labels pending)")
+            }
+            if (dets.isEmpty()) { inFlight.set(false); return }
+
+            val working = java.util.Collections.synchronizedList(primeList.toMutableList())
+            val pending = java.util.concurrent.atomic.AtomicInteger(dets.size)
+
+            // 이전 프레임 라벨 전파
+            for (i in working.indices) {
+                val prev = findPrevFor(working[i].rect)
+                if (prev != null) {
+                    val w = working[i]
+                    working[i] = w.copy(
+                        ocrLabel  = w.ocrLabel  ?: prev.ocrLabel,
+                        iconLabel = w.iconLabel ?: prev.iconLabel
+                    )
+                }
+            }
+            fun pushUpdate(reason: String) {
+                if (frameSeq.get() != frameId) return
+                overlayView.post {
+                    overlayView.setSourceSize(rotated.width, rotated.height)
+                    overlayView.submitBoxes(working.toList())
+                    overlayView.invalidate()
+                    android.util.Log.d(
+                        "ANALYZER_BOXES",
+                        "Update($reason) -> ${working.count { it.ocrLabel != null || it.iconLabel != null }}/${working.size}"
+                    )
+                }
+                pushVmThrottled(working.toList())
+            }
+            pushUpdate("propagate-from-prev")
+
+            dets.forEachIndexed { idx, det ->
+                val expanded = expandRectToMinSize(
+                    det.rect, minW = 64f, minH = 40f,
+                    padFrac = if (det.rect.width() < 80f) 0.25f else 0.15f,
+                    imgW = rotated.width, imgH = rotated.height
+                )
+                val rawCrop = cropBitmap(rotated, expanded)
+                val up = upscaleForOcr(rawCrop, targetShort = 192, maxLong = 1024)
+                val ocrCrop = preprocessForOcr(up)
+                val inputImg = InputImage.fromBitmap(ocrCrop, 0)
+
+                fun setIcon(reason: String) {
+                    val icon = roleClf.predictRole(rawCrop)
+                    android.util.Log.d(
+                        "LABEL",
+                        "[$idx] ICON label='$icon' reason=$reason rect=$expanded raw=${rawCrop.width}x${rawCrop.height} ocr=${ocrCrop.width}x${ocrCrop.height}"
+                    )
+                    val old = working[idx]
+                    working[idx] = old.copy(iconLabel = icon)
+                    pushUpdate("icon")
+                }
+
+                textRecognizer.process(inputImg)
+                    .addOnSuccessListener { vt ->
+                        val bestLineRaw = pickBestLine(vt)
+                        val bestLine = stripPriceNoise(bestLineRaw)
+
+                        if (bestLine.isNotEmpty()) {
+                            // 임시 라벨 즉시 부착
+                            if (working[idx].ocrLabel.isNullOrBlank()) {
+                                working[idx] = working[idx].copy(ocrLabel = bestLine)
+                                pushUpdate("ocr-interim")
+                            }
+
+                            // 메뉴 스냅만 적용 (LEXICON 스냅 제거)
+                            var finalLabel = bestMenuMatch(bestLine) ?: bestLine
+                            val source = if (finalLabel == bestLine) "raw-line" else "menu"
+
+                            if (enableLabelTrace) {
+                                android.util.Log.i(
+                                    "LABEL",
+                                    "[$idx] OCR label='$finalLabel' src=$source (raw='${vt.text.trim()}', line='${bestLineRaw}'->'${bestLine}') rect=$expanded raw=${rawCrop.width}x${rawCrop.height} ocr=${ocrCrop.width}x${ocrCrop.height}"
+                                )
+                            }
+
+                            val old = working[idx]
+                            working[idx] = old.copy(ocrLabel = finalLabel)
+                            pushUpdate("ocr")
+                        } else {
+                            setIcon("ocr-empty")
+                        }
+
+                        if (ocrCrop !== up && !ocrCrop.isRecycled) ocrCrop.recycle()
+                        if (up !== rawCrop && !up.isRecycled) up.recycle()
+                        if (!rawCrop.isRecycled) rawCrop.recycle()
+
+                        if (pending.decrementAndGet() == 0) {
+                            lastTracks = working.map { TrackState(it.rect, it.ocrLabel, it.iconLabel) }
+                            kioskViewModel.setDetectedButtons(working.toList())
+                            inFlight.set(false)
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        setIcon("ocr-failed: ${e.message}")
+                        if (ocrCrop !== up && !ocrCrop.isRecycled) ocrCrop.recycle()
+                        if (up !== rawCrop && !up.isRecycled) up.recycle()
+                        if (!rawCrop.isRecycled) rawCrop.recycle()
+
+                        if (pending.decrementAndGet() == 0) {
+                            lastTracks = working.map { TrackState(it.rect, it.ocrLabel, it.iconLabel) }
+                            kioskViewModel.setDetectedButtons(working.toList())
+                            inFlight.set(false)
+                        }
+                    }
+            }
+
+        } catch (e: Throwable) {
+            android.util.Log.e("ANALYZER", "analyze error", e)
+            overlayView.post { overlayView.submitBoxes(emptyList()); overlayView.invalidate() }
+            inFlight.set(false)
+        } finally {
+            image.close()
+        }
+    }
+}
+
+
+/*
+@ActivityScoped
+class ObjectDetectAnalyzer @Inject constructor(
+    private val previewView: PreviewView,
+    private val overlayView: DetectionOverlayView,
+    private val detector: YoloV8TfliteInterpreter,
+    private val roleClf: IconRoleClassifier,
+    private val yuvConverter: YuvToRgbConverter,
+    private val kioskViewModel: KioskViewModel,
+    private val throttleMs: Long = 0L
+) : ImageAnalysis.Analyzer {
+
+    private val lastTs = java.util.concurrent.atomic.AtomicLong(0L)
+    private val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val frameSeq = java.util.concurrent.atomic.AtomicLong(0L)
+
+    private val textRecognizer = TextRecognition.getClient(
+        KoreanTextRecognizerOptions.Builder().build()
+    )
+
+    private val enableLabelTrace = true
+    private data class LabelResult(val text: String, val source: String)
+
+    // ── 간이 트래커(프레임 간 라벨 전파)
+    private data class TrackState(val rect: RectF, val ocrLabel: String?, val iconLabel: String?)
+    private var lastTracks: List<TrackState> = emptyList()
+    private fun iou(a: RectF, b: RectF): Float {
+        val ix = max(0f, min(a.right, b.right) - max(a.left, b.left))
+        val iy = max(0f, min(a.bottom, b.bottom) - max(a.top, b.top))
+        val inter = ix * iy
+        if (inter <= 0f) return 0f
+        val areaA = a.width() * a.height()
+        val areaB = b.width() * b.height()
+        return inter / (areaA + areaB - inter)
+    }
+    private fun findPrevFor(rect: RectF, minIou: Float = 0.40f): TrackState? =
+        lastTracks.maxByOrNull { iou(it.rect, rect) }?.takeIf { iou(it.rect, rect) >= minIou }
+
+    // ── ViewModel 부분 업데이트 쓰로틀
+    private var lastVmPushMs = 0L
+    private val VM_PUSH_COOLDOWN_MS = 80L
+    private fun pushVmThrottled(list: List<ButtonBox>) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastVmPushMs >= VM_PUSH_COOLDOWN_MS) {
+            kioskViewModel.setDetectedButtons(list)
+            lastVmPushMs = now
+        }
+    }
+
+    // ── 키오스크 도메인 사전(문장 단위 스냅 대상)
+    private val LEXICON = listOf(
+        "가져가기","먹고가기","해피포인트 로그인 후 주문 하기","바로 주문하기","고대비","돋보기",
+        "처음으로","교환권 조회","직원 호출","혜택 제휴","콘 컵","포장 가능 아이스크림","아이스크림 케이크","커피",
+        "패밀리 아이스크림","싱글 레귤러","더블 주니어","싱글컵","더블 레귤러",
+        "컵","콘","와플콘","이전 화면","선택 완료","추천 맛","전체 맛","과일","우유 치즈","주문 수정","삭제","메뉴 더 담기",
+        "현금 결제","카드 결제","배라앱 매장 결제","해피 포인트","모바일 교환권","배라 앱 발급 쿠폰","케이티 멤버십","티 멤버십","현대 에이치 포인트","기아멤버스","블루멤버스","임직원",
+        "결제하기","신용카드","간편 결제","결제취소"
+    )
+
+    // ── OCR 유틸
+    private fun expandRectToMinSize(
+        r: RectF, minW: Float, minH: Float, padFrac: Float, imgW: Int, imgH: Int
+    ): RectF {
+        val w = r.width(); val h = r.height()
+        val padX = max(w * padFrac, 2f)
+        val padY = max(h * padFrac, 2f)
+        var left = r.left - padX
+        var top = r.top - padY
+        var right = r.right + padX
+        var bottom = r.bottom + padY
+        if (right - left < minW) { val add = (minW - (right - left))/2f; left -= add; right += add }
+        if (bottom - top < minH) { val add = (minH - (bottom - top))/2f; top -= add; bottom += add }
+        left = left.coerceIn(0f, imgW.toFloat()); top = top.coerceIn(0f, imgH.toFloat())
+        right = right.coerceIn(0f, imgW.toFloat()); bottom = bottom.coerceIn(0f, imgH.toFloat())
+        if (right <= left) right = min(imgW.toFloat(), left + minW)
+        if (bottom <= top) bottom = min(imgH.toFloat(), top + minH)
+        return RectF(left, top, right, bottom)
+    }
+
+    private fun upscaleForOcr(src: Bitmap, targetShort: Int = 192, maxLong: Int = 1024): Bitmap {
+        val shortSide = min(src.width, src.height)
+        if (shortSide >= targetShort) return src
+        val scale = targetShort.toFloat() / shortSide
+        val outW = (src.width * scale).toInt().coerceAtMost(maxLong)
+        val outH = (src.height * scale).toInt().coerceAtMost(maxLong)
+        return Bitmap.createScaledBitmap(src, outW, outH, true)
+    }
+
+    private fun preprocessForOcr(src: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(out)
+        val cm = android.graphics.ColorMatrix().apply { setSaturation(0f) }
+        val contrast = 1.45f
+        val brightness = 12f
+        cm.postConcat(android.graphics.ColorMatrix(floatArrayOf(
+            contrast, 0f,       0f,       0f, brightness,
+            0f,       contrast, 0f,       0f, brightness,
+            0f,       0f,       contrast, 0f, brightness,
+            0f,       0f,       0f,       1f, 0f
+        )))
+        val paint = android.graphics.Paint().apply {
+            colorFilter = android.graphics.ColorMatrixColorFilter(cm)
+            isFilterBitmap = true
+        }
+        canvas.drawBitmap(src, 0f, 0f, paint)
+        return out
+    }
+
+    private fun normalizeOcr(text: String): String {
+        var t = text.replace(Regex("\n+"), " ").trim()
+        t = t.replace('O','0').replace('o','0')
+            .replace('l','1').replace('I','1')
+            .replace('S','5')
+        return t
+    }
+
+    private fun cropBitmap(src: Bitmap, rect: RectF): Bitmap {
+        val left = rect.left.toInt().coerceAtLeast(0)
+        val top = rect.top.toInt().coerceAtLeast(0)
+        val width = rect.width().toInt().coerceAtMost(src.width - left).coerceAtLeast(1)
+        val height = rect.height().toInt().coerceAtMost(src.height - top).coerceAtLeast(1)
+        return Bitmap.createBitmap(src, left, top, width, height)
+    }
+
+    private fun rotate(b: Bitmap, deg: Int): Bitmap {
+        if (deg == 0) return b
+        val m = android.graphics.Matrix().apply { postRotate(deg.toFloat()) }
+        return Bitmap.createBitmap(b, 0, 0, b.width, b.height, m, true)
+    }
+
+    // ── 편집거리(메뉴 매칭에만 사용)
+    private fun editDistance(a: String, b: String): Int {
+        val m = a.length; val n = b.length
+        if (m == 0) return n
+        if (n == 0) return m
+        val dp = Array(m + 1) { IntArray(n + 1) }
+        for (i in 0..m) dp[i][0] = i
+        for (j in 0..n) dp[0][j] = j
+        for (i in 1..m) for (j in 1..n) {
+            val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+            dp[i][j] = minOf(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
+        }
+        return dp[m][n]
+    }
+
+    // ── 텍스트 정리/라인 선택
+    private fun hangulScore(s: String): Int {
+        val h = Regex("[가-힣]").findAll(s).count()
+        val d = Regex("[0-9]").findAll(s).count()
+        return h * 2 - d
+    }
+    private fun stripPriceNoise(s: String): String {
+        return s
+            .replace(Regex("\\b\\d{1,3}(,\\d{3})+\\b"), " ")
+            .replace(Regex("\\b\\d+\\s*원\\b"), " ")
+            .replace(Regex("\\b\\d+[!,.]?\\b"), " ")
+            .replace(Regex("[₩$€¥!]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+    private fun pickBestLine(vt: com.google.mlkit.vision.text.Text): String {
+        val lines = mutableListOf<String>()
+        for (b in vt.textBlocks) for (l in b.lines) lines += l.text.trim()
+        if (lines.isEmpty()) return vt.text.trim()
+        val scored = lines.mapIndexed { idx, s -> (hangulScore(s) + (lines.size - idx)) to s }
+        val best = scored.maxByOrNull { it.first }?.second ?: vt.text.trim()
+        return stripPriceNoise(best)
+    }
+
+    // ── 메뉴 카탈로그/매칭
+    private data class MenuEntry(
+        val canonical: String,
+        val aliases: Set<String> = emptySet(),
+        val tags: Set<String> = emptySet()
+    )
+    private fun normForMatch(s: String): String {
+        val t = s.replace(Regex("\\(.*?\\)"), " ")
+            .replace(Regex("[/_,:·]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .replace(Regex("\\d"), "")
+            .trim()
+        return t.replace(" ", "").uppercase()
+    }
+    private fun buildMenuCatalog(rawLines: List<String>): List<MenuEntry> {
+        val catPrefixes = listOf("블록팩", "레디팩")
+        val tagWords = mapOf(
+            "케이크" to setOf("케이크"), "스틱바" to setOf("스틱바"),
+            "모찌" to setOf("모찌"), "모나카" to setOf("모나카"),
+            "바움쿠헨" to setOf("바움쿠헨"), "선데" to setOf("선데"),
+            "빙수" to setOf("빙수","컵빙수"),
+            "블라스트" to setOf("블라스트"), "쉐이크" to setOf("쉐이크"),
+            "라떼" to setOf("라떼"), "아메리카노" to setOf("아메리카노"),
+            "콜드브루" to setOf("콜드브루")
+        )
+        fun extractTags(name: String): Set<String> {
+            val tags = mutableSetOf<String>()
+            for ((k, vs) in tagWords) if (vs.any { name.contains(it) }) tags += k
+            if (Regex("\\(.*?Lessly.*?\\)", RegexOption.IGNORE_CASE).containsMatchIn(name)) tags += "Lessly Edition"
+            return tags
+        }
+        fun genAliases(one: String): Pair<Set<String>, Set<String>> {
+            var base = one.trim()
+            val tags = mutableSetOf<String>()
+            for (p in catPrefixes) if (base.startsWith(p)) { tags += p; base = base.removePrefix(p).trim(); break }
+            val noParen = base.replace(Regex("\\(.*?\\)"), "").trim()
+            fun variants(s: String) = setOf(
+                s, s.replace(" ", ""), s.replace("-", " ").replace(Regex("\\s+"), " ").trim()
+            )
+            val withPrefix = tags.map { "$it $noParen".trim() }.toSet()
+            val alias = variants(noParen) + withPrefix.flatMap { variants(it) }
+            return alias to (tags + extractTags(one))
+        }
+        val entries = mutableListOf<MenuEntry>()
+        for (line in rawLines.map { it.trim() }.filter { it.isNotEmpty() }) {
+            val parts = line.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val first = parts.first()
+            val (aliasSet, tags) = genAliases(first)
+            val moreAliases = parts.drop(1).flatMap { genAliases(it).first }
+            val allAliases = aliasSet + moreAliases
+            val canonical = first
+                .replace(Regex("^블록팩\\s*|^레디팩\\s*"), "")
+                .replace(Regex("\\(.*?\\)"), "")
+                .trim()
+            entries += MenuEntry(canonical = canonical, aliases = allAliases, tags = tags)
+        }
+        return entries
+    }
+    private val RAW_MENU = listOf(
+        "요거트 젤라또","헤이즐넛 젤라또","애플망고 젤라또",
+        "블록팩 레인보우샤베트","블록팩 베리베리스트로베리","블록팩 초콜릿","블록팩 바람과함께사라지다",
+        "블록팩 이상한나라의솜사탕","블록팩 민트초코봉봉","블록팩 뉴욕치즈케이크","블록팩 쿠키앤크림",
+        "블록팩 엄마는외계인","블록팩 아몬드봉봉","블록팩 슈팅스타","블록팩 체리쥬빌레",
+        "레디팩 초코나무 숲","레디팩 31 요거트","레디팩 레인보우 샤베트","레디팩 민트 초콜릿 칩",
+        "레디팩 베리베리 스트로베리","레디팩 소금 우유","레디팩 아몬드 봉봉","레디팩 엄마는 외계인",
+        "레디팩 오레오 쿠키 앤 크림","레디팩 체리쥬빌레",
+
+        "위대한 비쵸비","블루 바나나 브륄레","(Lessly Edition) 아몬드 봉봉","(Lessly Edition) 엄마는 외계인",
+        "트로피컬 썸머 플레이","북극곰 폴라베어","블루 서퍼 비치","아이스 맥심 모카골드","사랑에 빠진 딸기",
+        "피치 요거트","피치 Pang", "망고 Pang","수박 Hero","메롱 멜론","애플 민트","엄마는 외계인",
+        "민트 초콜릿 칩","뉴욕 치즈케이크","레인보우 샤베트","체리쥬빌레","슈팅스타","오레오 쿠키 앤 크림",
+        "베리베리 스트로베리","31요거트","바람과 함께 사라지다","피스타치오 아몬드","초콜릿 무스","그린티",
+        "초콜릿","자모카 아몬드 훠지","아몬드 봉봉","바닐라",
+
+        "(Lessly Edition) 민트 초콜릿 칩 미니 케이크","(Lessly Edition) 엄마는 외계인 미니 케이크",
+        "개구쟁이 스머프 하우스","더 듬뿍 프루티 케이크","더 듬뿍 복숭아 케이크","더 듬뿍 딸기 케이크",
+        "진정한 초콜릿 케이크","진정한 치즈 케이크","진정한 티라미수 케이크","반짝이는 잔망루피",
+        "나눠먹는 와츄원","나눠먹는 큐브 와츄원","골라먹는 27 큐브","해피 버스데이","우주에서 온 엄마는 외계인",
+        "스노우 볼 와츄원","리얼 초코 27 큐브","미니 골라먹는 와츄원","미니 해피 버스데이 케이크",
+
+        "블루 바나나 스틱바","(Lessly Edition) 저당 피치요거트 스틱바","(Lessly Edition) 저당 망고코코넛 스틱바",
+        "아이스 바움쿠헨 아몬드봉봉","아이스 바움쿠헨 카페오레","쿠키 크런치 선데","카페 크런치 선데",
+        "더 듬뿍 설향딸기 컵빙수","더 듬뿍 설향딸기 빙수","더 듬뿍 칸탈로프 멜론 컵빙수","더 듬뿍 칸탈로프 멜론 빙수",
+        "더 듬뿍 팥빙수","더 듬뿍 팥 컵빙수","버터 쿠키 샌드 스트로베리","버터 쿠키 샌드 바닐라 카라멜",
+        "그린티 킷캣 선데","아이스 마카롱 크림브륄레","아이스 꿀떡","홀리데이 미니 아이스 마카롱","DIY 모나카 세트",
+        "아이스 모찌 밤 티라미수","아몬드봉봉모찌","아이스 모찌 슈크림","맥심 스틱바 슈프림골드","아이스 쿠키 샌드 바닐라",
+        "맥심 스틱바 모카골드 마일드","미니 아이스 스틱바 바닐라","아이스 마카롱 체리쥬빌레","아이스 마카롱 초콜릿 무스",
+        "아이스 마카롱 쿠키앤크림","아이스 모나카 쫀떡 인절미","아이스 모나카 우유","아이스 모찌 소금우유",
+        "아이스 모찌 그린티","아이스 모찌 스트로베리","아이스 모찌 초코바닐라","아이스 모찌 크림치즈",
+
+        "아이스 믹스커피 블라스트","짐빔 하이볼 레몬 블라스트","(Lessly Edition) 쉐이크",
+        "모구모구 블라스트","칸탈로프 멜론 블라스트","수박 블라스트","딸기 찹쌀떡 쉐이크","저당 과일티",
+        "설향딸기 블라스트","요거트 블라스트","카푸치노 블라스트","아이스크림 블라스트","와츄원 쉐이크",
+        "밀크 쉐이크","오레오 쉐이크","납작복숭아 아이스티","딸기 연유 라떼",
+
+        "아메리카노","카페라떼","바닐라빈 라떼","카라멜 마끼아또","엄마는 외계인 카페모카","연유라떼",
+        "카페31","아포가토 라떼","콜드브루 아메리카노","콜드브루 라떼","콜드브루 오트","슈크림 아포가토 블라스트",
+        "슈가밤 커피","슈가밤 블라스트","아포가토"
+    )
+    private val MENU_CATALOG: List<MenuEntry> by lazy { buildMenuCatalog(RAW_MENU) }
+
+    private fun bestMenuMatch(text: String): String? {
+        val q = normForMatch(text)
+        if (q.isBlank()) return null
+        var bestCanon: String? = null
+        var bestDist = Int.MAX_VALUE
+        var bestAliasLen = 0
+        for (e in MENU_CATALOG) for (alias in e.aliases) {
+            val a = normForMatch(alias); if (a.isBlank()) continue
+            val d = editDistance(q, a)
+            if (d < bestDist || (d == bestDist && a.length > bestAliasLen)) {
+                bestDist = d; bestCanon = e.canonical; bestAliasLen = a.length
+            }
+        }
+        val maxAllowed = max(1, (kotlin.math.ceil(q.length * 0.2)).toInt())
+        return if (bestCanon != null && bestDist <= maxAllowed) bestCanon else null
+    }
+
+    // ── 문장 단위 Lexicon 스냅(강한 매칭일 때만)
+    private fun jaroWinkler(aRaw: String, bRaw: String): Double {
+        val a = aRaw.lowercase(); val b = bRaw.lowercase()
+        if (a == b) return 1.0
+        val maxDist = (max(a.length, b.length) / 2) - 1
+        val aMatch = BooleanArray(a.length); val bMatch = BooleanArray(b.length)
+        var matches = 0; var transpositions = 0
+        for (i in a.indices) {
+            val start = max(0, i - maxDist)
+            val end = min(i + maxDist + 1, b.length)
+            for (j in start until end) if (!bMatch[j] && a[i] == b[j]) {
+                aMatch[i] = true; bMatch[j] = true; matches++; break
+            }
+        }
+        if (matches == 0) return 0.0
+        var k = 0
+        for (i in a.indices) if (aMatch[i]) {
+            while (!bMatch[k]) k++
+            if (a[i] != b[k]) transpositions++
+            k++
+        }
+        val m = matches.toDouble()
+        var jaro = (m / a.length + m / b.length + (m - transpositions / 2.0) / m) / 3.0
+        var p = 0
+        while (p < min(4, min(a.length, b.length)) && a[p] == b[p]) p++
+        jaro += p * 0.1 * (1 - jaro)
+        return jaro
+    }
+    private fun normLex(s: String): String =
+        s.replace("\n", " ").replace(Regex("\\s+"), " ").trim()
+    private fun isLikelyButton(rect: RectF, imgW: Int, imgH: Int): Boolean {
+        val area = rect.width() * rect.height()
+        val imgArea = imgW.toFloat() * imgH.toFloat()
+        if (imgArea <= 0f) return false
+        val ar = rect.width() / max(1f, rect.height())
+        return area in (0.02f * imgArea)..(0.45f * imgArea) && ar in 0.55f..2.8f
+    }
+    private data class SnapResult(val text: String, val snapped: Boolean)
+    private fun phraseSnapToLexicon(raw: String, rect: RectF, imgW: Int, imgH: Int): SnapResult {
+        val t = normLex(raw)
+        if (t.isBlank() || !isLikelyButton(rect, imgW, imgH)) return SnapResult(t, false)
+        var best: String? = null
+        var bestScore = 0.0
+        var second = 0.0
+        for (cand in LEXICON) {
+            val s = jaroWinkler(t, cand)
+            if (s > bestScore) { second = bestScore; bestScore = s; best = cand }
+            else if (s > second) second = s
+        }
+        if (best != null) {
+            val lenA = t.length.toDouble()
+            val lenB = best!!.length.toDouble()
+            val lenRatio = max(lenA, lenB) / max(1.0, min(lenA, lenB))
+            val distinctEnough = (bestScore - second) >= 0.06
+            val strong = bestScore >= 0.88 && lenRatio <= 1.33
+            if (strong && distinctEnough) return SnapResult(best!!, true)
+        }
+        return SnapResult(t, false)
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+
+    override fun analyze(image: ImageProxy) {
+        try {
+            val now = System.currentTimeMillis()
+            if (throttleMs > 0 && now - lastTs.get() < throttleMs) { image.close(); return }
+            lastTs.set(now)
+
+            if (!inFlight.compareAndSet(false, true)) { image.close(); return }
+
+            val src = yuvConverter.toBitmap(image)
+            val rot = image.imageInfo.rotationDegrees
+            val rotated = if (rot != 0) rotate(src, rot) else src
+            if (rot != 0) src.recycle()
+
+            val dets = detector.detect(rotated)
+            val frameId = frameSeq.incrementAndGet()
+
+            // 프라임 드로우(라벨 없이 먼저 그리기)
+            val primeList = dets.mapIndexed { i, d ->
+                ButtonBox(id = i, rect = d.rect, ocrLabel = null, iconLabel = null)
+            }
+            overlayView.post {
+                try { overlayView.bringToFront() } catch (_: Throwable) {}
+                overlayView.setSourceSize(rotated.width, rotated.height)
+                overlayView.submitBoxes(primeList)
+                overlayView.invalidate()
+                android.util.Log.i("ANALYZER_BOXES", "Prime draw ${primeList.size} boxes (labels pending)")
+            }
+            if (dets.isEmpty()) { inFlight.set(false); return }
+
+            val working = java.util.Collections.synchronizedList(primeList.toMutableList())
+            val pending = java.util.concurrent.atomic.AtomicInteger(dets.size)
+
+            // 이전 프레임 라벨 전파
+            for (i in working.indices) {
+                val prev = findPrevFor(working[i].rect)
+                if (prev != null) {
+                    val w = working[i]
+                    working[i] = w.copy(
+                        ocrLabel  = w.ocrLabel  ?: prev.ocrLabel,
+                        iconLabel = w.iconLabel ?: prev.iconLabel
+                    )
+                }
+            }
+            fun pushUpdate(reason: String) {
+                if (frameSeq.get() != frameId) return
+                overlayView.post {
+                    overlayView.setSourceSize(rotated.width, rotated.height)
+                    overlayView.submitBoxes(working.toList())
+                    overlayView.invalidate()
+                    android.util.Log.d(
+                        "ANALYZER_BOXES",
+                        "Update($reason) -> ${working.count { it.ocrLabel != null || it.iconLabel != null }}/${working.size}"
+                    )
+                }
+                pushVmThrottled(working.toList())
+            }
+            pushUpdate("propagate-from-prev")
+
+            dets.forEachIndexed { idx, det ->
+                val expanded = expandRectToMinSize(
+                    det.rect, minW = 64f, minH = 40f,
+                    padFrac = if (det.rect.width() < 80f) 0.25f else 0.15f,
+                    imgW = rotated.width, imgH = rotated.height
+                )
+                val rawCrop = cropBitmap(rotated, expanded)
+                val up = upscaleForOcr(rawCrop, targetShort = 192, maxLong = 1024)
+                val ocrCrop = preprocessForOcr(up)
+                val inputImg = InputImage.fromBitmap(ocrCrop, 0)
+
+                fun setIcon(reason: String) {
+                    val icon = roleClf.predictRole(rawCrop)
+                    android.util.Log.d(
+                        "LABEL",
+                        "[$idx] ICON label='$icon' reason=$reason rect=$expanded raw=${rawCrop.width}x${rawCrop.height} ocr=${ocrCrop.width}x${ocrCrop.height}"
+                    )
+                    val old = working[idx]
+                    working[idx] = old.copy(iconLabel = icon)
+                    pushUpdate("icon")
+                }
+
+                textRecognizer.process(inputImg)
+                    .addOnSuccessListener { vt ->
+                        val bestLineRaw = pickBestLine(vt)
+                        val bestLine = stripPriceNoise(bestLineRaw)
+
+                        if (bestLine.isNotEmpty()) {
+                            // 임시 라벨 즉시 부착
+                            if (working[idx].ocrLabel.isNullOrBlank()) {
+                                working[idx] = working[idx].copy(ocrLabel = bestLine)
+                                pushUpdate("ocr-interim")
+                            }
+
+                            // 메뉴 스냅 → (강한 경우만) 문장 단위 Lexicon 스냅 → 메뉴 재스냅
+                            var finalLabel = bestMenuMatch(bestLine) ?: bestLine
+                            var source = if (finalLabel == bestLine) "raw-line" else "menu-pre"
+
+                            val snap = phraseSnapToLexicon(finalLabel, det.rect, rotated.width, rotated.height)
+                            if (snap.snapped) { finalLabel = snap.text; source = "lexicon" }
+
+                            bestMenuMatch(finalLabel)?.let {
+                                finalLabel = it; source = "menu-post"
+                            }
+
+                            if (enableLabelTrace) {
+                                android.util.Log.i(
+                                    "LABEL",
+                                    "[$idx] OCR label='$finalLabel' src=$source (raw='${vt.text.trim()}', line='${bestLineRaw}'->'${bestLine}') rect=$expanded raw=${rawCrop.width}x${rawCrop.height} ocr=${ocrCrop.width}x${ocrCrop.height}"
+                                )
+                            }
+
+                            val old = working[idx]
+                            working[idx] = old.copy(ocrLabel = finalLabel)
+                            pushUpdate("ocr+phrase-snap")
+                        } else {
+                            setIcon("ocr-empty")
+                        }
+
+                        if (ocrCrop !== up && !ocrCrop.isRecycled) ocrCrop.recycle()
+                        if (up !== rawCrop && !up.isRecycled) up.recycle()
+                        if (!rawCrop.isRecycled) rawCrop.recycle()
+
+                        if (pending.decrementAndGet() == 0) {
+                            lastTracks = working.map { TrackState(it.rect, it.ocrLabel, it.iconLabel) }
+                            kioskViewModel.setDetectedButtons(working.toList())
+                            inFlight.set(false)
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        setIcon("ocr-failed: ${e.message}")
+                        if (ocrCrop !== up && !ocrCrop.isRecycled) ocrCrop.recycle()
+                        if (up !== rawCrop && !up.isRecycled) up.recycle()
+                        if (!rawCrop.isRecycled) rawCrop.recycle()
+
+                        if (pending.decrementAndGet() == 0) {
+                            lastTracks = working.map { TrackState(it.rect, it.ocrLabel, it.iconLabel) }
+                            kioskViewModel.setDetectedButtons(working.toList())
+                            inFlight.set(false)
+                        }
+                    }
+            }
+
+        } catch (e: Throwable) {
+            android.util.Log.e("ANALYZER", "analyze error", e)
+            overlayView.post { overlayView.submitBoxes(emptyList()); overlayView.invalidate() }
+            inFlight.set(false)
+        } finally {
+            image.close()
+        }
+    }
+}
+*/
+
+/*
+@ActivityScoped
+class ObjectDetectAnalyzer @Inject constructor(
     private val previewView: PreviewView,             // 런타임 전달
     private val overlayView: DetectionOverlayView,    // 런타임 전달
     private val detector: YoloV8TfliteInterpreter,    // Hilt 주입
@@ -75,14 +1000,12 @@ class ObjectDetectAnalyzer @Inject constructor(
 
     // ==== [PATCH #6] 키오스크 도메인 사전 ====
     private val LEXICON = listOf(
-        // 국문
-        "결제","결제완료","신용카드","카드","현금","현장결제",
-        "현금영수증","영수증","발행","적립","포인트","쿠폰","회원","회원가입","로그인",
-        "주문","주문완료","확인","확정","취소","전체취소","재시도","다음","이전",
-        "번호표","대기표","처리중",
-        // 영문(간단 예시)
-        "CARD","CASH","COUPON","POINT","MEMBER","RECEIPT","ISSUE","ORDER",
-        "CANCEL","OK","YES","NO","PAY","NEXT","BACK"
+        "가져가기","먹고가기","해피포인트 로그인 후 주문 하기","바로 주문하기","고대비","돋보기",
+        "처음으로","교환권 조회","직원 호출","혜택 제휴","콘 컵","포장 가능 아이스크림","아이스크림 케이크","커피",
+        "패밀리 아이스크림","싱글 레귤러","더블 주니어","싱글컵","더블 레귤러","네","아니요",
+        "컵","콘","와플콘","이전 화면","선택 완료","추천 맛","전체 맛","과일","우유 치즈","주문 수정","삭제","메뉴 더 담기",
+        "현금 결제","카드 결제","배라앱 매장 결제","해피 포인트","모바일 교환권","배라 앱 발급 쿠폰","케이티 멤버십","티 멤버십","현대 에이치 포인트","기아멤버스","블루멤버스","임직원",
+        "결제하기","신용카드","간편 결제","결제취소"
     )
 
     // ────────────── OCR 보강/유틸 ──────────────
@@ -549,6 +1472,7 @@ class ObjectDetectAnalyzer @Inject constructor(
         } finally { image.close() }
     }
 }
+*/
 
 /*
 @ActivityScoped
