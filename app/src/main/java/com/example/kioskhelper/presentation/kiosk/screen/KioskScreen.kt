@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Stop
@@ -99,7 +98,8 @@ fun KioskScreen(
                     listening = ui.listening,
                     // ⬇️ "하이라이트만 취소" 로 변경
                     onCancel = kioskVm::onCancel,
-                    onMicClick = kioskVm::onMicToggle
+                    onMicClick = kioskVm::onMicToggle,
+                    finalText = ui.finalText
                 )
             }
         }
@@ -259,7 +259,8 @@ fun SttOverlay(ui: KioskViewModel.UiState, modifier: Modifier = Modifier) {
 private fun BottomBarModern(
     listening: Boolean,
     onCancel: () -> Unit,
-    onMicClick: () -> Unit
+    onMicClick: () -> Unit,
+    finalText: String
 ) {
     val haptics = LocalHapticFeedback.current
     val micLabel = if (listening) "듣는 중" else "말하기"
@@ -267,29 +268,34 @@ private fun BottomBarModern(
     Box(
         Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()   // 하단 내비 겹침 방지
-            .imePadding()              // 키보드 시 안전
+            .navigationBarsPadding()
+            .imePadding()
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
-        // ① 왼쪽: 취소 (듣는 중일 때만 활성)
+        // ① 좌측: 취소 버튼
         OutlinedButton(
             onClick = onCancel,
-            enabled = true,
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .height(56.dp),
+            colors = if (finalText.isBlank()) {
+                ButtonDefaults.outlinedButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    contentColor   = MaterialTheme.colorScheme.primary
+                )
+            } else {
+                ButtonDefaults.outlinedButtonColors()
+            }
         ) {
-            Icon(
-                imageVector = Icons.Rounded.Close,
-                contentDescription = "취소"
-            )
+            Icon(imageVector = Icons.Rounded.Close, contentDescription = "취소")
             Spacer(Modifier.width(8.dp))
-            Text("취소", style = MaterialTheme.typography.titleLarge.copy(
-                fontWeight = FontWeight.Bold
-            ),)
+            Text(
+                "취소",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+            )
         }
 
-        // ② 중앙: 큰 원형 마이크 버튼 (가장 눈에 띄고 누르기 쉬움)
+        // ② 중앙: 큰 원형 마이크 버튼
         Button(
             onClick = {
                 onMicClick()
@@ -297,7 +303,7 @@ private fun BottomBarModern(
             },
             modifier = Modifier
                 .align(Alignment.Center)
-                .size(102.dp), // 큰 터치 타깃
+                .size(102.dp),
             shape = CircleShape,
             contentPadding = PaddingValues(0.dp),
             elevation = ButtonDefaults.buttonElevation(
