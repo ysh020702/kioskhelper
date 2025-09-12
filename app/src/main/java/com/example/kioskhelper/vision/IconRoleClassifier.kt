@@ -16,7 +16,7 @@ private const val TAG = "IconRoleClassifier"
 
 class IconRoleClassifier(ctx: Context, modelAsset: String) {
 
-    private val roles = arrayOf(
+    /*private val roles = arrayOf(
         "추가",           // add
         "아래로 이동",      // arrow_down
         "왼쪽으로 이동",     // arrow_left
@@ -31,6 +31,15 @@ class IconRoleClassifier(ctx: Context, modelAsset: String) {
         "감소",            // minus
         "QR코드 스캔",     // qr_code
         "스크롤 바 이동"     // scroll_bar
+    )*/
+
+    private val roles = arrayOf(
+        "add",           // add
+        "arrow_down",      // arrow_down
+        "arrow_left",     // arrow_left
+        "arrow_right",   // arrow_right
+        "arrow_up",        // arrow_up
+        "minus"
     )
 
 

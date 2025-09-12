@@ -18,10 +18,10 @@ import javax.inject.Singleton
 object VisionModule {
     // ── 기본 설정값(원하면 바꿔서 바인딩 가능) ──────────────────────────────
     @Provides @Named("yolo_asset")
-    fun provideYoloAssetName(): String = "best_int8.tflite"
+    fun provideYoloAssetName(): String = "best_float16.tflite"
 
     @Provides @Named("role_asset")
-    fun provideRoleAssetName(): String = "icon_model.tflite"
+    fun provideRoleAssetName(): String = "icon_mnv3_int8.tflite"
 
     @Provides @Named("yolo_input_size")
     fun provideYoloInputSize(): Int = 640
