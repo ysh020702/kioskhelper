@@ -129,10 +129,7 @@ class DetectionOverlayView @JvmOverloads constructor(
         // 고정으로 쓰고 싶으면 위 한 줄 대신 ↓
         // fillPaint.alpha = 90
 
-        val idsToDraw = when {
-            amb && highlightIds.size >= 2 -> setOf(highlightIds[altIndex])
-            else -> highlightIds.toSet()
-        }
+        val idsToDraw: Set<Int> = highlightIds.toSet()
 
         boxes.forEach { b ->
             // src(px) → view 좌표로 변환
