@@ -29,7 +29,7 @@ class MiniLMMatcher(context: Context) {
     }
 
 
-    private val threshold = 0.6 // 문자열 유사도 임계값
+    private val threshold = 0.8 // 문자열 유사도 임계값
 
     /** 버튼과 query 유사도 계산 후 id 반환 */
     fun matchAndHighlight(query: String, buttons: List<ButtonBox>): List<Int> {
