@@ -1,6 +1,7 @@
 package com.example.kioskhelper.ui.theme
 
 import android.app.Activity
+import android.hardware.lights.Light
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -9,28 +10,46 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+// ---- Light scheme ----
+private val LightColors = lightColorScheme(
+    primary = Teal600,
+    onPrimary = Color.Black,       // 밝은 색 위 텍스트는 검정이 가독성 ↑
+    secondary = Teal400,
+    onSecondary = Color.Black,
+    tertiary = Teal500,
+    onTertiary = Color.Black,
+
+    background = White,
+    onBackground = NearBlack,
+    surface = White,
+    onSurface = NearBlack,
+
+    surfaceVariant = Color(0xFFE8E8E8),
+    onSurfaceVariant = Color(0xFF2B2B2B),
+    outline = OutlineG,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
+// ---- Dark scheme ----
+// 다크에서는 포인트 컬러 유지 + 표면/배경만 어둡게
+private val DarkColors = darkColorScheme(
+    primary = Teal600,
+    onPrimary = Color.Black,       // 이 색상은 다크에서도 검정이 대비 좋음
+    secondary = Teal400,
+    onSecondary = Color.Black,
+    tertiary = Teal500,
+    onTertiary = Color.Black,
 
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    background = Color(0xFF0F1112),
+    onBackground = Color(0xFFEDEDEE),
+    surface = Color(0xFF121415),
+    onSurface = Color(0xFFEDEDEE),
+
+    surfaceVariant = Color(0xFF2A2D2F),
+    onSurfaceVariant = Color(0xFFD9DADC),
+    outline = Color(0xFF414649),
 )
 
 @Composable
@@ -46,8 +65,8 @@ fun KioskhelperTheme(
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
 
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        darkTheme -> DarkColors
+        else -> LightColors
     }
 
     MaterialTheme(

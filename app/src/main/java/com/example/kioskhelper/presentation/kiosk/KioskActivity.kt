@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import com.example.kioskhelper.presentation.kiosk.screen.BaseActivity
 import com.example.kioskhelper.presentation.kiosk.screen.KioskScreen
+import com.example.kioskhelper.ui.theme.KioskhelperTheme
 import com.example.kioskhelper.vision.TfliteTaskObjectDetector
 import com.example.kioskhelper.vision.YoloV8TfliteInterpreter
 import dagger.hilt.android.AndroidEntryPoint
@@ -30,8 +31,9 @@ class KioskActivity : BaseActivity() {
 
         // 2) 나머지는 전부 Compose Screen/VM에서 처리
         setContent {
-            KioskScreen(
-            ) // ← 네가 만든 Compose 스크린(이미 VM을 내부에서 hiltViewModel로 가져간다고 가정)
+            KioskhelperTheme {
+                KioskScreen() // ← 네가 만든 Compose 스크린(이미 VM을 내부에서 hiltViewModel로 가져간다고 가정)
+            }
         }
     }
 }
