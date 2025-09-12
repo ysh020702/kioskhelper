@@ -1,7 +1,8 @@
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
+[![Contributors](https://img.shields.io/github/contributors/ysh020702/kioskhelper.svg?style=for-the-badge)](https://github.com/ysh020702/kioskhelper/graphs/contributors)
+[![Forks](https://img.shields.io/github/forks/ysh020702/kioskhelper.svg?style=for-the-badge)](https://github.com/ysh020702/kioskhelper/network/members)
+[![Stargazers](https://img.shields.io/github/stars/ysh020702/kioskhelper.svg?style=for-the-badge)](https://github.com/ysh020702/kioskhelper/stargazers)
+[![Issues](https://img.shields.io/github/issues/ysh020702/kioskhelper.svg?style=for-the-badge)](https://github.com/ysh020702/kioskhelper/issues)
+
 
 ## 1. 개발 동기
 운영 비용 등의 이유로 무인 키오스크가 널리 사용되고 있습니다.
@@ -20,12 +21,12 @@
 **KioskHelper**는 키오스크 화면을 카메라로 인식하여 버튼을 자동 탐지하고,  
 사용자가 음성으로 원하는 기능을 말하면 해당 버튼을 강조·안내하는 **키오스크 사용 보조 앱**입니다.  
 
+
+### 주요 파이프라인은 다음과 같습니다.
 - **YOLOv8 기반 버튼 탐지**: 실시간으로 키오스크 UI의 버튼 위치를 인식  
 - **아이콘 역할 분류**: 홈/결제/취소 등 버튼의 의미를 분류  
 - **STT & TTS 연동**: 사용자의 명령어를 인식(STT) → 버튼 강조 → 음성 안내(TTS)  
 - **실시간 UI 강조**: 빨간 박스 및 하이라이트 애니메이션으로 시각적 피드백 제공  
-
-이 앱은 키오스크를 직접 조작하기 어려운 사용자에게 직관적이고 편리한 경험을 제공합니다.  
 
 ---
 
