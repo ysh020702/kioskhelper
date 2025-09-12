@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Stop
@@ -23,6 +24,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -57,11 +59,7 @@ fun KioskScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        StatusDot(on = ui.statusDotOn)
-                        Spacer(Modifier.width(8.dp))
-                        Text("키오스크 도우미")
-                    }
+                    StatusDot(on = ui.statusDotOn)
                 },
                 actions = {
                     Column(
@@ -84,15 +82,6 @@ fun KioskScreen(
                                 text = "찾은 버튼: ${ui.highlightedIds.size}개",
                                 tone = if (ui.highlightedIds.size >= 2) PillTone.Warn else PillTone.Neutral
                             )
-                            // ⬇️ 하이라이트 토글(선택사항)
-                            TextButton(
-                                onClick = {
-                                    if (ui.highlightEnabled) kioskVm.cancelHighlightOnly()
-                                    else kioskVm.resumeHighlight()
-                                }
-                            ) {
-                                Text(if (ui.highlightEnabled) "하이라이트 끄기" else "하이라이트 켜기")
-                            }
                         }
                     }
                 }
@@ -109,7 +98,7 @@ fun KioskScreen(
                 BottomBarModern(
                     listening = ui.listening,
                     // ⬇️ "하이라이트만 취소" 로 변경
-                    onCancel = kioskVm::cancelHighlightOnly,
+                    onCancel = kioskVm::onCancel,
                     onMicClick = kioskVm::onMicToggle
                 )
             }
@@ -142,32 +131,20 @@ fun KioskScreen(
                             throttleMs = 0
                         )
                     },
-                    // ⬇️ 하이라이트가 꺼져 있으면 빈 리스트 전달 → 빨간 강조 즉시 사라짐
-                    highlightIds = if (ui.highlightEnabled) ui.highlightedIds else emptyList(),
-                    ambiguous = ui.highlightEnabled && ui.highlightedIds.size >= 2
+                    highlightIds = ui.highlightedIds,
+                    ambiguous = ui.highlightedIds.size >= 2
                 )
 
-                // ✅ 오른쪽 위 코너 상태 카드
-                Box(
+                // 🔹 음성인식 메시지 오버레이 (상단 중앙)
+                SttOverlay(
+                    ui = ui,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                ) {
-                    StatusCornerCard(
-                        currentLabel = if (ui.highlightEnabled) ui.currentHighlightLabel else null
-                    )
-                }
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp, start = 12.dp, end = 12.dp)
+                )
             }
 
-            // 디버그 스냅샷(간단 버전)
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                if (!ui.sttError.isNullOrBlank())
-                    Text("STT 오류: ${ui.sttError}", color = Color.Red)
-                if (ui.partialText.isNotBlank())
-                    Text("Partial: ${ui.partialText}")
-                if (ui.finalText.isNotBlank())
-                    Text("Final  : ${ui.finalText}")
-            }
+
         }
     }
 }
@@ -183,9 +160,8 @@ fun KioskScreen(
 @Composable private fun GuideBannerStylish(text: String) {
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        shape = RoundedCornerShape(12.dp),
-        tonalElevation = 2.dp,
+        tonalElevation = 6.dp,
+        shape = MaterialTheme.shapes.large,
         modifier = Modifier
             .padding(horizontal = 12.dp)
             .fillMaxWidth()
@@ -194,32 +170,21 @@ fun KioskScreen(
             Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Filled.Info, contentDescription = null)
+            Icon(
+                imageVector = Icons.Default.Info, // 강조 의미를 주는 아이콘
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(32.dp)
+            )
             Spacer(Modifier.width(8.dp))
-            Text(text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-@Composable
-fun StatusCornerCard(
-    currentLabel: String?
-) {
-    Surface(
-        tonalElevation = 4.dp,
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
-    ) {
-        Column(
-
-        ) {
-            // 현재 강조 중 라벨
-            if (!currentLabel.isNullOrBlank()) {
-                Text(
-                    text = "$currentLabel 강조 중",
-                    style = MaterialTheme.typography.labelMedium
-                )
-            }
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontWeight = FontWeight.Bold
+                ),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 2
+            )
         }
     }
 }
@@ -251,6 +216,44 @@ private fun StatusPill(text: String, tone: PillTone) {
     }
 }
 
+// 2) 상단 오버레이: 음성 인식 메시지(최종을 크고 굵게, 없으면 partial 가볍게)
+@Composable
+fun SttOverlay(ui: KioskViewModel.UiState, modifier: Modifier = Modifier) {
+    val hasFinal = ui.finalText.isNotBlank()
+    val hasPartial = ui.partialText.isNotBlank()
+    val finalText = ui.finalText
+
+    if (!hasFinal && !hasPartial) return
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.96f)
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            if (hasFinal) {
+                // ✅ 사용자가 찾으려는 버튼 문구: 명확하고 굵게
+                Text(
+                    text = "'$finalText' 인식 중...",
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else if (hasPartial) {
+                // 진행 중 안내(가볍게)
+                Text(
+                    text = ui.partialText,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
 /** 하단 바를 떠 있게 (접근성↑) */
 @Composable
 private fun BottomBarModern(
@@ -271,7 +274,7 @@ private fun BottomBarModern(
         // ① 왼쪽: 취소 (듣는 중일 때만 활성)
         OutlinedButton(
             onClick = onCancel,
-            enabled = listening,
+            enabled = true,
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .height(56.dp),
@@ -281,7 +284,9 @@ private fun BottomBarModern(
                 contentDescription = "취소"
             )
             Spacer(Modifier.width(8.dp))
-            Text("취소", style = MaterialTheme.typography.titleMedium)
+            Text("취소", style = MaterialTheme.typography.titleLarge.copy(
+                fontWeight = FontWeight.Bold
+            ),)
         }
 
         // ② 중앙: 큰 원형 마이크 버튼 (가장 눈에 띄고 누르기 쉬움)
@@ -292,7 +297,7 @@ private fun BottomBarModern(
             },
             modifier = Modifier
                 .align(Alignment.Center)
-                .size(88.dp), // 큰 터치 타깃
+                .size(102.dp), // 큰 터치 타깃
             shape = CircleShape,
             contentPadding = PaddingValues(0.dp),
             elevation = ButtonDefaults.buttonElevation(
@@ -322,7 +327,9 @@ private fun BottomBarModern(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     micLabel,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
                     maxLines = 1
                 )
             }

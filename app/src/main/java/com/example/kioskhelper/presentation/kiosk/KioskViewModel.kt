@@ -12,6 +12,7 @@ import com.example.kioskhelper.domain.usecase.tts.*
 import com.example.kioskhelper.presentation.model.ButtonBox
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.delay
 import javax.inject.Inject
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -53,8 +54,6 @@ class KioskViewModel @Inject constructor(
         val buttons: List<ButtonBox> = emptyList(),
         val currentHighlightLabel: String? = null,
 
-        // 🔴 추가: 하이라이트만 on/off (감지는 계속)
-        val highlightEnabled: Boolean = true
     )
 
     // UI 단발 이벤트
@@ -73,77 +72,64 @@ class KioskViewModel @Inject constructor(
     private var currentLangTag: String = "ko-KR"
     private var lastPartial: String? = null
 
+    // ── 수집: STT Partial / Final / Events, TTS Events ────────────────────
+    init {
+        // Partial: 실시간 하이라이트 (하이라이트 켜져 있을 때만 반영)
+        observeSttPartial()
+            .onEach { text ->
+                if (text.isNullOrBlank()) return@onEach
+                lastPartial = text
+                _ui.update { it.copy(partialText = text, sttError = null) }
+            }
+            .launchIn(viewModelScope)
+
+        // Final: 결과 오면 즉시 최종 처리(= 종료 및 탐지/안내)
+        observeSttFinal()
+            .onEach { text -> finishUtterance(text.orEmpty()) }
+            .launchIn(viewModelScope)
+
+        // STT 이벤트: 침묵 감지/에러 시 즉시 마무리 (자동 재시작 없음)
+        observeSttEvents()
+            .onEach { ev ->
+                when (ev) {
+                    is SttRepository.Event.Ready -> _ui.update { it.copy(sttError = null) }
+                    is SttRepository.Event.Error -> {
+                        _ui.update { it.copy(sttError = ev.message) }
+                        finishUtterance(null) // 에러 시점까지의 말로 마무리
+                    }
+                    is SttRepository.Event.EndOfSpeech -> {
+                        finishUtterance(null) // 잠깐 침묵 → 종료 & 탐지
+                    }
+                    else -> Unit
+                }
+            }
+            .launchIn(viewModelScope)
+
+        // TTS 이벤트(말하는 중 표시)
+        observeTtsEvents()
+            .onEach { tev ->
+                when (tev) {
+                    is TtsRepository.Event.Started -> _ui.update { it.copy(ttsSpeaking = true) }
+                    is TtsRepository.Event.Done -> _ui.update { it.copy(ttsSpeaking = false) }
+                }
+            }
+            .launchIn(viewModelScope)
+    }
+
+
     // ── 외부(카메라/탐지)에서 버튼 세트 주입 ─────────────────────────────
     fun setDetectedButtons(buttons: List<ButtonBox>) {
         _ui.update { it.copy(buttons = buttons) }
 
         // 감지는 계속되지만, 하이라이트가 꺼져 있으면 재매칭으로 강조를 갱신하지 않음
         val query = ui.value.partialText.ifBlank { ui.value.finalText }
-        if (query.isNotBlank() && ui.value.highlightEnabled) {
+        if (query.isNotBlank()) {
             val ids = matchAndHighlight(query, buttons)
             _ui.update { it.copy(highlightedIds = ids) }
         }
     }
 
-    // ── 마이크 토글 ───────────────────────────────────────────────────────
-    fun onMicToggle() {
-        if (isListening) stopListeningFlow() else startListeningFlow("ko-KR")
-    }
-
-    // ── 취소(풀 취소: STT/TTS/텍스트/하이라이트 초기화) ───────────────────
-    // 기존 코드 호환을 위해 유지. "하이라이트만" 취소가 필요하면 아래 cancelHighlightOnly() 사용.
-    fun onCancel() = viewModelScope.launch {
-        isListening = false
-        cancelStt()
-        stopTts()
-        lastPartial = null
-        _ui.update {
-            it.copy(
-                listening = false,
-                statusDotOn = false,
-                partialText = "",
-                finalText = "",
-                highlightedIds = emptyList(),
-                tip = "분석을 취소했어요. 다시 시작하려면 버튼 탭하세요.",
-                sttError = null,
-                currentHighlightLabel = null
-            )
-        }
-    }
-
-    // ── 🔴 하이라이트만 취소 (감지/버튼 업데이트/듣기 상태는 그대로) ────────
-    fun cancelHighlightOnly() = viewModelScope.launch {
-        _ui.update {
-            it.copy(
-                highlightEnabled = false,
-                highlightedIds = emptyList(),
-                currentHighlightLabel = null,
-                tip = "하이라이트를 취소했어요. 감지는 계속돼요."
-            )
-        }
-        // 하이라이트 안내가 진행 중이면 멈추고 싶을 때만 유지
-        try { stopTts() } catch (_: Throwable) {}
-        _toast.emit(ToastEvent.ShowToast("하이라이트를 취소했어요."))
-    }
-
-    // ── 하이라이트 다시 켜기 ─────────────────────────────────────────────
-    fun resumeHighlight() {
-        _ui.update { it.copy(highlightEnabled = true) }
-        // 필요하면 현재 텍스트로 즉시 재매칭
-        val query = ui.value.partialText.ifBlank { ui.value.finalText }
-        if (query.isNotBlank()) {
-            val ids = matchAndHighlight(query, ui.value.buttons)
-            _ui.update { it.copy(highlightedIds = ids) }
-        }
-    }
-
-    // ── TTS 설정(앱 시작 시 1회 호출 권장) ────────────────────────────────
-    fun initTts(rate: Float = 1.0f, pitch: Float = 1.0f) = viewModelScope.launch {
-        setTtsRate(rate)
-        setTtsPitch(pitch)
-    }
-
-    // ── 듣기 시작/종료 ────────────────────────────────────────────────────
+    //── 음성 인식 플로우 ────────────────────────────────────────────────────
     private fun startListeningFlow(languageTag: String = "ko-KR") {
         if (isListening) return
         isListening = true
@@ -183,6 +169,57 @@ class KioskViewModel @Inject constructor(
         }
     }
 
+    // ── 마이크 토글 ───────────────────────────────────────────────────────
+    fun onMicToggle() {
+        if (isListening) {
+            // 녹음 중 → 중지
+            stopListeningFlow()
+            _ui.update {
+                it.copy(
+                    tip = "인식 중...",
+                    statusDotOn = false
+                )
+            }
+        } else {
+            // 대기 중 → 시작
+            startListeningFlow("ko-KR")
+            _ui.update { it.copy(tip = "듣고 있어요...") }
+        }
+    }
+
+    // ── 취소(풀 취소: STT/TTS/텍스트/하이라이트 초기화) ───────────────────
+    // 기존 코드 호환을 위해 유지. "하이라이트만" 취소가 필요하면 아래 cancelHighlightOnly() 사용.
+    fun onCancel()= viewModelScope.launch {
+        // 2-1) 녹음 중이면 스탑 (STT/TTS 충돌 방지)
+        if (isListening) {
+            stopListeningFlow()
+            try { stopTts() } catch (_: Throwable) {}
+        }
+
+        // 2-2) 하이라이트가 발생하지 않도록 쿼리 소스 비우기 + 강조 해제
+        lastPartial = null
+        _ui.update {
+            it.copy(
+                partialText = "",     // 실시간 쿼리 비움
+                finalText = "",       // 최종 쿼리 비움 → match 조건 불충족
+                highlightedIds = emptyList(),
+                currentHighlightLabel = null,
+                tip = "강조를 취소했어요."
+            )
+        }
+        //5초 뒤 다시 IDLE_MESSAGE
+        delay(5000)
+        _ui.update { it.copy(tip = IDLE_MESSAGE)
+
+        }
+
+        // 참고: setDetectedButtons()는 query가 비어 있으면 매칭/강조를 하지 않음
+        // (val query = partial.ifBlank { final }; if (query.isNotBlank()) { ... })
+        // 따라서 위에서 final/partial을 비우면 이후에도 하이라이트가 발생하지 않음.
+    }
+
+
+
     // ── 최종 처리: final(or 마지막 partial)로 매칭/안내 → 종료 ─────────────
     private fun finishUtterance(finalOrNull: String?) {
         val text = finalOrNull?.takeIf { it.isNotBlank() }
@@ -199,33 +236,32 @@ class KioskViewModel @Inject constructor(
                 )
             }
 
-            if (ui.value.highlightEnabled) {
-                val ids = matchAndHighlight(text, ui.value.buttons)
-                if (ids.isNotEmpty()) {
-                    val topId = ids.first()
-                    val topLabel = ui.value.buttons.firstOrNull { it.id == topId }?.displayLabel ?: "해당 버튼"
-                    _ui.update {
-                        it.copy(
-                            listening = false,
-                            statusDotOn = false,
-                            tip = "‘$topLabel’$HIGHLIGHTING_BUTTON",
-                            highlightedIds = listOf(topId),
-                            currentHighlightLabel = topLabel
-                        )
-                    }
-
-                    // 종료 후 안내(마이크와 충돌 없음)
-                    viewModelScope.launch {
-                        enqueueSpeak("‘$topLabel’$HIGHLIGHTING_BUTTON")
-                        _toast.emit(ToastEvent.ShowToast("‘$topLabel’$HIGHLIGHTING_BUTTON"))
-                    }
-                } else {
-                    _ui.update { it.copy(highlightedIds = emptyList(), currentHighlightLabel = null) }
-                    viewModelScope.launch {
-                        enqueueSpeak("'$text'에 해당하는 버튼이 없어요. 다시 말씀해 주세요.")
-                    }
+            val ids = matchAndHighlight(text, ui.value.buttons)
+            if (ids.isNotEmpty()) {
+                val topId = ids.first()
+                val topLabel = ui.value.buttons.firstOrNull { it.id == topId }?.displayLabel ?: "해당 버튼"
+                _ui.update {
+                    it.copy(
+                        listening = false,
+                        statusDotOn = false,
+                        tip = "‘$topLabel’$HIGHLIGHTING_BUTTON",
+                        highlightedIds = listOf(topId),
+                        currentHighlightLabel = topLabel
+                    )
                 }
-            } // highlightEnabled=false이면 결과 누적만 하고 강조/안내 생략
+
+                // 종료 후 안내(마이크와 충돌 없음)
+                viewModelScope.launch {
+                    enqueueSpeak("‘$topLabel’$HIGHLIGHTING_BUTTON")
+                    _toast.emit(ToastEvent.ShowToast("‘$topLabel’$HIGHLIGHTING_BUTTON"))
+                }
+            } else {
+                _ui.update { it.copy(highlightedIds = emptyList(), currentHighlightLabel = null) }
+                viewModelScope.launch {
+                    enqueueSpeak("'$text'에 해당하는 버튼을 찾으면 빨간 색으로 표시할게요.")
+                }
+            }
+
         } else {
             // 아무 텍스트도 없으면 조용히 종료
             _ui.update { it.copy(partialText = "") }
@@ -236,54 +272,7 @@ class KioskViewModel @Inject constructor(
         lastPartial = null
     }
 
-    // ── 수집: STT Partial / Final / Events, TTS Events ────────────────────
-    init {
-        // Partial: 실시간 하이라이트 (하이라이트 켜져 있을 때만 반영)
-        observeSttPartial()
-            .onEach { text ->
-                if (text.isNullOrBlank()) return@onEach
-                lastPartial = text
-                _ui.update { it.copy(partialText = text, sttError = null) }
 
-                if (ui.value.highlightEnabled) {
-                    val ids = matchAndHighlight(text, ui.value.buttons)
-                    _ui.update { it.copy(highlightedIds = ids) }
-                }
-            }
-            .launchIn(viewModelScope)
-
-        // Final: 결과 오면 즉시 최종 처리(= 종료 및 탐지/안내)
-        observeSttFinal()
-            .onEach { text -> finishUtterance(text.orEmpty()) }
-            .launchIn(viewModelScope)
-
-        // STT 이벤트: 침묵 감지/에러 시 즉시 마무리 (자동 재시작 없음)
-        observeSttEvents()
-            .onEach { ev ->
-                when (ev) {
-                    is SttRepository.Event.Ready -> _ui.update { it.copy(sttError = null) }
-                    is SttRepository.Event.Error -> {
-                        _ui.update { it.copy(sttError = ev.message) }
-                        finishUtterance(null) // 에러 시점까지의 말로 마무리
-                    }
-                    is SttRepository.Event.EndOfSpeech -> {
-                        finishUtterance(null) // 잠깐 침묵 → 종료 & 탐지
-                    }
-                    else -> Unit
-                }
-            }
-            .launchIn(viewModelScope)
-
-        // TTS 이벤트(말하는 중 표시)
-        observeTtsEvents()
-            .onEach { tev ->
-                when (tev) {
-                    is TtsRepository.Event.Started -> _ui.update { it.copy(ttsSpeaking = true) }
-                    is TtsRepository.Event.Done -> _ui.update { it.copy(ttsSpeaking = false) }
-                }
-            }
-            .launchIn(viewModelScope)
-    }
 
     override fun onCleared() {
         super.onCleared()
@@ -294,9 +283,9 @@ class KioskViewModel @Inject constructor(
     private val miniLmMatcher = MiniLMMatcher(appContext)
 
     private fun matchAndHighlight(query: String, buttons: List<ButtonBox>): List<Int> {
-        buttons.forEach { button ->
-            Log.d("MatchAndHighlight", "Button name: ${button.displayLabel}")
-        }
+//        buttons.forEach { button ->
+//            Log.d("MatchAndHighlight", "Button name: ${button.displayLabel}")
+//        }
         return miniLmMatcher.matchAndHighlight(query, buttons)
     }
 
