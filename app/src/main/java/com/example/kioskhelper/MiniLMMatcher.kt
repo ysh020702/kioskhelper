@@ -32,7 +32,7 @@ class MiniLMMatcher(context: Context) {
     }
 
 
-    private val threshold = 0.8 // 문자열 유사도 임계값
+    private val threshold = 0.6 // 문자열 유사도 임계값
 
     /** 버튼과 query 유사도 계산 후 id 반환 */
     fun matchAndHighlight(query: String, buttons: List<ButtonBox>): List<Int> {
@@ -58,16 +58,20 @@ class MiniLMMatcher(context: Context) {
 
     /** 유사도 검사: 그룹 + 문자열 유사도 */
     private fun areSimilar(a: String, b: String): Boolean {
+
+        val normA = a.replace(" ", "")
+        val normB = b.replace(" ", "")
+
         // 동일 문자열 또는 부분 문자열
-        if (a == b || a in b || b in a) return true
+        if (normA == normB || normA in normB || normB in normA) return true
 
         // JSON 그룹 기반 유사도
         for (group in similarGroups) {
-            if (a in group && b in group) return true
+            if (normA in group && normB in group) return true
         }
 
         // 문자열 유사도 계산 (자모 단위 변환 후)
-        val sim = similarity(HangulUtils.decompose(a), HangulUtils.decompose(b))
+        val sim = similarity(HangulUtils.decompose(normA), HangulUtils.decompose(normB))
         return sim >= threshold
     }
 
