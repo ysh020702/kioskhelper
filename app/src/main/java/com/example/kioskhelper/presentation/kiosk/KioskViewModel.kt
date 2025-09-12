@@ -39,17 +39,24 @@ class KioskViewModel @Inject constructor(
     private val stopTts: StopTtsUseCase
 ) : ViewModel() {
 
+    //Strings
+    companion object {
+        private const val IDLE_MESSAGE = "키오스크 화면을 비춰주세요."
+        private const val HIGHLIGHTING_BUTTON = "버튼을 강조하고 있어요"
+    }
+
     // ── UI 모델 ────────────────────────────────────────────────────────────
     data class UiState(
         val listening: Boolean = false,           // 듣는 중(토글 ON)
         val statusDotOn: Boolean = false,         // 우상단 초록 점
-        val tip: String? = "키오스크 화면을 비춰주세요.",
+        val tip: String = IDLE_MESSAGE,
         val partialText: String = "",
         val finalText: String = "",               // ✅ 최종 누적
         val sttError: String? = null,
         val ttsSpeaking: Boolean = false,
         val highlightedIds: List<Int> = emptyList(),
-        val buttons: List<ButtonBox> = emptyList()
+        val buttons: List<ButtonBox> = emptyList(),
+        val currentHighlightLabel: String? = null   // ✅ 추가
     )
 
     // UI 단발 이벤트
@@ -100,8 +107,9 @@ class KioskViewModel @Inject constructor(
                 partialText = "",
                 finalText = "",
                 highlightedIds = emptyList(),
-                tip = "취소했어요.",
-                sttError = null
+                tip = "분석을 취소했어요. 다시 시작하려면 버튼 탭하세요.",
+                sttError = null,
+                currentHighlightLabel = null
             )
         }
     }
@@ -124,7 +132,7 @@ class KioskViewModel @Inject constructor(
                 listening = true,
                 statusDotOn = true,
                 sttError = null,
-                tip = null,
+                tip = "듣고 있어요...",
                 partialText = "" // 새 세션 진입 시 클리어
             )
         }
@@ -142,7 +150,12 @@ class KioskViewModel @Inject constructor(
 
         viewModelScope.launch {
             stopStt() // 필요 시 cancelStt() 병행 고려
-            _ui.update { it.copy(listening = false, statusDotOn = false) }
+            _ui.update { it.copy(
+                listening = false,
+                statusDotOn = false,
+                tip = "버튼을 인식 중이에요..."
+            )
+            }
         }
     }
 
@@ -157,6 +170,7 @@ class KioskViewModel @Inject constructor(
             _ui.update {
                 it.copy(
                     finalText = (text).trim(),
+                    tip=IDLE_MESSAGE,
                     partialText = ""
                 )
             }
@@ -165,17 +179,31 @@ class KioskViewModel @Inject constructor(
             if (ids.isNotEmpty()) {
                 val topId = ids.first()
                 val topLabel = ui.value.buttons.firstOrNull { it.id == topId }?.displayLabel ?: "해당 버튼"
-                _ui.update { it.copy(highlightedIds = listOf(topId)) }
+                _ui.update {
+                    it.copy(
+                        listening = false,
+                        statusDotOn = false,
+                        tip = "‘$topLabel’$HIGHLIGHTING_BUTTON",
+                        highlightedIds = listOf(topId),
+                        currentHighlightLabel = topLabel
+                    )
+                }
 
                 // 종료 후 안내(마이크와 충돌 없음)
                 viewModelScope.launch {
-                    enqueueSpeak("‘$topLabel’ 버튼을 강조했어요.")
-                    _toast.emit(ToastEvent.ShowToast("‘$topLabel’ 버튼을 강조했어요."))
+                    enqueueSpeak("‘$topLabel’$HIGHLIGHTING_BUTTON")
+                    _toast.emit(ToastEvent.ShowToast("‘$topLabel’$HIGHLIGHTING_BUTTON"))
                 }
+
             } else {
-                _ui.update { it.copy(highlightedIds = emptyList()) }
+                _ui.update { it.copy(
+                    highlightedIds = emptyList(),
+                    currentHighlightLabel = null
+                )
+                }
+
                 viewModelScope.launch {
-                    enqueueSpeak("해당하는 버튼이 없어요. 다시 말씀해 주세요.")
+                    enqueueSpeak("'$text'에 해당하는 버튼이 없어요. 다시 말씀해 주세요.")
                 }
             }
         } else {
