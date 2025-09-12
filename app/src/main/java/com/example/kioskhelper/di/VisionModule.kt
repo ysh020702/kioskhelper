@@ -21,7 +21,7 @@ object VisionModule {
     fun provideYoloAssetName(): String = "best_float16.tflite"
 
     @Provides @Named("role_asset")
-    fun provideRoleAssetName(): String = "icon_mobilev3_padded.tflite"
+    fun provideRoleAssetName(): String = "icon_mnv3_int8.tflite"
 
     @Provides @Named("yolo_input_size")
     fun provideYoloInputSize(): Int = 640
