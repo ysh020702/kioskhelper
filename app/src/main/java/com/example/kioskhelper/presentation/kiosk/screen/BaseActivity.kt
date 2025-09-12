@@ -6,6 +6,7 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.graphics.Color
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
@@ -17,12 +18,8 @@ open class BaseActivity : ComponentActivity() {
     }
 
     private fun hideSystemBars() {
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            window.isNavigationBarContrastEnforced = false
-        }
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            isAppearanceLightNavigationBars = true
-        }
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightNavigationBars = true
     }
 }
