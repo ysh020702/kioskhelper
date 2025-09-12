@@ -33,6 +33,15 @@ class IconRoleClassifier(ctx: Context, modelAsset: String) {
         "스크롤 바 이동"     // scroll_bar
     )
 
+    /*private val roles = arrayOf(
+        "add",           // add
+        "arrow_down",      // arrow_down
+        "arrow_left",     // arrow_left
+        "arrow_right",   // arrow_right
+        "arrow_up",        // arrow_up
+        "minus"
+    )*/
+
 
     private val interpreter: Interpreter = Interpreter(Utils.loadModel(ctx, modelAsset))
 
