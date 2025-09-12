@@ -81,7 +81,7 @@ class DetectionOverlayView @JvmOverloads constructor(
 
     private fun startPulse() {
         pulseAnimator?.cancel()
-        pulseAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+        pulseAnimator = ValueAnimator.ofFloat(0f, 0.5f).apply {
             duration = 800L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
@@ -130,7 +130,7 @@ class DetectionOverlayView @JvmOverloads constructor(
             tmpRect.set(b.rect)
             if (srcW > 0 && srcH > 0) srcToView.mapRect(tmpRect)
 
-            paint.color = if (idsToDraw.contains(b.id)) Color.RED else Color.BLUE
+            paint.color = if (idsToDraw.contains(b.id)) Color.RED else Color.TRANSPARENT
             canvas.drawRoundRect(tmpRect, 18f, 18f, paint)
         }
     }

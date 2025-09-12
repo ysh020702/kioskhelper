@@ -23,7 +23,7 @@ class YoloV8TfliteInterpreter(
     context: Context,
     modelAsset: String = "model.tflite",
     private val inputSize: Int = 640,
-    private val confThresh: Float = 0.15f,  // ← 디버깅용으로 낮춤(필요시 0.25로 복구)
+    private val confThresh: Float = 0.54f,  // ← 디버깅용으로 낮춤(필요시 0.25로 복구)
     private val iouThresh: Float = 0.45f,
     numThreads: Int = 2
 ) {

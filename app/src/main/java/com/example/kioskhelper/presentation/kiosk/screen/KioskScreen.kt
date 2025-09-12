@@ -53,7 +53,6 @@ fun KioskScreen(
     }
 
     Scaffold(
-
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
@@ -85,9 +84,17 @@ fun KioskScreen(
                                 text = "찾은 버튼: ${ui.highlightedIds.size}개",
                                 tone = if (ui.highlightedIds.size >= 2) PillTone.Warn else PillTone.Neutral
                             )
+                            // ⬇️ 하이라이트 토글(선택사항)
+                            TextButton(
+                                onClick = {
+                                    if (ui.highlightEnabled) kioskVm.cancelHighlightOnly()
+                                    else kioskVm.resumeHighlight()
+                                }
+                            ) {
+                                Text(if (ui.highlightEnabled) "하이라이트 끄기" else "하이라이트 켜기")
+                            }
                         }
                     }
-
                 }
             )
         },
@@ -96,12 +103,13 @@ fun KioskScreen(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding() // ← 하단 내비와 겹침 방지
-                    .imePadding()            // ← 키보드 올라올 때도 안전(필요 시)
+                    .navigationBarsPadding()
+                    .imePadding()
             ) {
                 BottomBarModern(
                     listening = ui.listening,
-                    onCancel = kioskVm::onCancel,
+                    // ⬇️ "하이라이트만 취소" 로 변경
+                    onCancel = kioskVm::cancelHighlightOnly,
                     onMicClick = kioskVm::onMicToggle
                 )
             }
@@ -112,9 +120,9 @@ fun KioskScreen(
                 .fillMaxSize()
                 .padding(inner)
         ) {
-            AnimatedVisibility(visible = !ui.tip.isNullOrBlank()) {
+            AnimatedVisibility(visible = ui.tip.isNotBlank()) {
                 Column {
-                    GuideBannerStylish(ui.tip!!)
+                    GuideBannerStylish(ui.tip)
                     Spacer(Modifier.height(8.dp))
                 }
             }
@@ -134,8 +142,9 @@ fun KioskScreen(
                             throttleMs = 0
                         )
                     },
-                    highlightIds = ui.highlightedIds,
-                    ambiguous = ui.highlightedIds.size >= 2
+                    // ⬇️ 하이라이트가 꺼져 있으면 빈 리스트 전달 → 빨간 강조 즉시 사라짐
+                    highlightIds = if (ui.highlightEnabled) ui.highlightedIds else emptyList(),
+                    ambiguous = ui.highlightEnabled && ui.highlightedIds.size >= 2
                 )
 
                 // ✅ 오른쪽 위 코너 상태 카드
@@ -145,7 +154,7 @@ fun KioskScreen(
                         .padding(8.dp)
                 ) {
                     StatusCornerCard(
-                        currentLabel = ui.currentHighlightLabel
+                        currentLabel = if (ui.highlightEnabled) ui.currentHighlightLabel else null
                     )
                 }
             }
@@ -201,7 +210,9 @@ fun StatusCornerCard(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
     ) {
-        Column(Modifier.padding(10.dp)) {
+        Column(
+
+        ) {
             // 현재 강조 중 라벨
             if (!currentLabel.isNullOrBlank()) {
                 Text(
@@ -318,15 +329,3 @@ private fun BottomBarModern(
         }
     }
 }
-
-
-@Composable private fun MicToggleButton( listening: Boolean, onMicClick: () -> Unit ) {
-    val label = if (listening) "듣는 중… 탭하여 종료" else "탭하여 음성인식 시작"
-    Button( onClick = onMicClick, // ← 한 번 탭으로 토글
-            colors = ButtonDefaults
-                .buttonColors( containerColor = if (listening) Color(0xFF2ECC71) else MaterialTheme.colorScheme.primary ) )
-    {
-        Text(label)
-    }
-}
-

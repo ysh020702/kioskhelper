@@ -72,47 +72,10 @@ fun setupCamera(
         analysis.setAnalyzer(Executors.newSingleThreadExecutor(), analyzer)
         android.util.Log.d("SETUP", "setAnalyzer attached")
 
-        // 3) 가장 넓은 화각의 '후면' 카메라 선택
-        val wideBackSelector = CameraSelector.Builder()
-            .addCameraFilter { infos ->
-                val backInfos = infos.filter { info ->
-                    Camera2CameraInfo.from(info)
-                        .getCameraCharacteristic(CameraCharacteristics.LENS_FACING) ==
-                            CameraCharacteristics.LENS_FACING_BACK
-                }
-                if (backInfos.isEmpty()) return@addCameraFilter emptyList()
-
-                // 각 카메라의 최소 초점거리(mm) 가져와서 가장 작은(=가장 넓은 화각) 카메라 고르기
-                val best = backInfos.minByOrNull { info ->
-                    val focalLengths = Camera2CameraInfo.from(info)
-                        .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                    focalLengths?.minOrNull() ?: Float.MAX_VALUE
-                }
-
-                if (best != null) listOf(best) else emptyList()
-            }
-            .build()
-
-        // 4) 바인딩 (항상 한 번만)
-        try {
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
-                lifecycleOwner,
-                wideBackSelector,   // ← 가능한 경우 초광각/광각 우선
-                preview,
-                analysis
-            )
-            android.util.Log.d("SETUP", "bindToLifecycle done (wide-back)")
-        } catch (e: Exception) {
-            android.util.Log.w("SETUP", "Wide-back select failed, fallback to DEFAULT_BACK_CAMERA", e)
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
-                lifecycleOwner,
-                CameraSelector.DEFAULT_BACK_CAMERA,
-                preview,
-                analysis
-            )
-            android.util.Log.d("SETUP", "bindToLifecycle done (default back)")
-        }
+        // 3) Bind to lifecycle (후면 카메라)
+        val selector = CameraSelector.DEFAULT_BACK_CAMERA
+        cameraProvider.unbindAll()
+        cameraProvider.bindToLifecycle( lifecycleOwner, selector, preview, analysis )
+        android.util.Log.d("SETUP", "bindToLifecycle done")
     }, ContextCompat.getMainExecutor(context))
 }
