@@ -1,3 +1,8 @@
+[![Contributors][contributors-shield]][contributors-url]
+[![Forks][forks-shield]][forks-url]
+[![Stargazers][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+
 ## 1. 개발 동기
 운영 비용 등의 이유로 무인 키오스크가 널리 사용되고 있습니다.
 그러나, 무인 키오스크는 사회의 모두가 편하게 느끼는 물건이 아닙니다.
