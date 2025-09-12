@@ -10,13 +10,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -242,24 +247,78 @@ private fun BottomBarModern(
     onCancel: () -> Unit,
     onMicClick: () -> Unit
 ) {
-    Surface(
-        tonalElevation = 8.dp,
-        shadowElevation = 4.dp
+    val haptics = LocalHapticFeedback.current
+    val micLabel = if (listening) "듣는 중" else "말하기"
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()   // 하단 내비 겹침 방지
+            .imePadding()              // 키보드 시 안전
+            .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
-        Row(
+        // ① 왼쪽: 취소 (듣는 중일 때만 활성)
+        OutlinedButton(
+            onClick = onCancel,
+            enabled = listening,
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .align(Alignment.CenterStart)
+                .height(56.dp),
         ) {
-            MicToggleButton(listening = listening, onMicClick = onMicClick)
-            OutlinedButton(onClick = onCancel, enabled = listening) {
-                Text("취소")
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = "취소"
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("취소", style = MaterialTheme.typography.titleMedium)
+        }
+
+        // ② 중앙: 큰 원형 마이크 버튼 (가장 눈에 띄고 누르기 쉬움)
+        Button(
+            onClick = {
+                onMicClick()
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            },
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(88.dp), // 큰 터치 타깃
+            shape = CircleShape,
+            contentPadding = PaddingValues(0.dp),
+            elevation = ButtonDefaults.buttonElevation(
+                defaultElevation = 8.dp,
+                pressedElevation = 12.dp
+            ),
+            colors = if (listening)
+                ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary,
+                    contentColor = MaterialTheme.colorScheme.onTertiary
+                )
+            else
+                ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = if (listening) Icons.Rounded.Stop else Icons.Rounded.Mic,
+                    contentDescription = micLabel,
+                    modifier = Modifier.size(32.dp)
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    micLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1
+                )
             }
         }
     }
 }
+
 
 @Composable private fun MicToggleButton( listening: Boolean, onMicClick: () -> Unit ) {
     val label = if (listening) "듣는 중… 탭하여 종료" else "탭하여 음성인식 시작"
