@@ -48,6 +48,8 @@ fun KioskScreen(
     }
 
     Scaffold(
+
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = {
@@ -85,11 +87,19 @@ fun KioskScreen(
             )
         },
         bottomBar = {
-            BottomBarModern(
-                listening = ui.listening,
-                onCancel = kioskVm::onCancel,
-                onMicClick = kioskVm::onMicToggle
-            )
+            // BottomBarModern 가 modifier 파라미터 없으면 이렇게 감싸 주세요
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding() // ← 하단 내비와 겹침 방지
+                    .imePadding()            // ← 키보드 올라올 때도 안전(필요 시)
+            ) {
+                BottomBarModern(
+                    listening = ui.listening,
+                    onCancel = kioskVm::onCancel,
+                    onMicClick = kioskVm::onMicToggle
+                )
+            }
         }
     ) { inner ->
         Column(
