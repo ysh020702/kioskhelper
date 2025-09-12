@@ -12,7 +12,7 @@ val Pink40 = Color(0xFF7D5260)
 
 // ---- Extracted from the slide ----
 // Base (BG/Text/Outline)
-val White      = Color(0xFFF8F8F8) // 배경
+val White      = Color(0xFFFFFFFF) // 배경
 val NearBlack  = Color(0xFF101010) // 본문 텍스트
 val OutlineG   = Color(0xFFD3D3D3) // 구분선/테두리
 

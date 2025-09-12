@@ -31,6 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kioskhelper.presentation.kiosk.KioskViewModel
 import com.example.kioskhelper.presentation.kiosk.VisionViewModel
 import com.example.kioskhelper.presentation.kiosk.setupCamera
+import com.example.kioskhelper.ui.theme.White
 import kotlinx.coroutines.flow.collectLatest
 
 @OptIn(ExperimentalMaterial3Api::class)

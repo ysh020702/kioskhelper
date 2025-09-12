@@ -43,7 +43,7 @@ private val DarkColors = darkColorScheme(
     onTertiary = Color.Black,
 
     background = Color(0xFF0F1112),
-    onBackground = Color(0xFFEDEDEE),
+    onBackground = Color(0xFFFFFFFF),
     surface = Color(0xFF121415),
     onSurface = Color(0xFFEDEDEE),
 

@@ -174,13 +174,8 @@ class KioskViewModel @Inject constructor(
         if (isListening) {
             // 녹음 중 → 중지
             stopListeningFlow()
-            _ui.update {
-                it.copy(
-                    tip = "인식 중...",
-                    statusDotOn = false
-                )
-            }
-        } else {
+
+            } else {
             // 대기 중 → 시작
             startListeningFlow("ko-KR")
             _ui.update { it.copy(tip = "듣고 있어요...") }
@@ -252,8 +247,8 @@ class KioskViewModel @Inject constructor(
 
                 // 종료 후 안내(마이크와 충돌 없음)
                 viewModelScope.launch {
-                    enqueueSpeak("‘$topLabel’$HIGHLIGHTING_BUTTON")
                     _toast.emit(ToastEvent.ShowToast("‘$topLabel’$HIGHLIGHTING_BUTTON"))
+                    enqueueSpeak("‘$topLabel’$HIGHLIGHTING_BUTTON")
                 }
             } else {
                 _ui.update { it.copy(highlightedIds = emptyList(), currentHighlightLabel = null) }
@@ -264,7 +259,16 @@ class KioskViewModel @Inject constructor(
 
         } else {
             // 아무 텍스트도 없으면 조용히 종료
-            _ui.update { it.copy(partialText = "") }
+            viewModelScope.launch {
+                delay(2000)
+                _toast.emit(ToastEvent.ShowToast("음성을 인식하지 못했어요"))
+                enqueueSpeak("음성을 인식하지 못했어요")
+            }
+            _ui.update { it.copy(
+                partialText = "",
+                tip=IDLE_MESSAGE
+            )
+            }
         }
 
         // 세션 종료
