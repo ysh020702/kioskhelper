@@ -14,20 +14,27 @@ class DetectionOverlayView @JvmOverloads constructor(
     ctx: Context, attrs: AttributeSet? = null
 ) : View(ctx, attrs) {
 
-
     private val boxes = mutableListOf<ButtonBox>()
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+    // 테두리(펄스) 페인트
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 6f
         color = Color.RED
     }
 
-    // ✅ [추가] 원본 크기와 매핑 행렬
+    // ★ 반투명 채우기 페인트 추가
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.RED
+        alpha = 90 // 기본 알파 (약간 반투명). 펄스에 따라 onDraw에서 동적으로 조정
+    }
+
+    // 원본 크기와 매핑 행렬
     private var srcW: Int = 0
     private var srcH: Int = 0
     private val srcToView = Matrix()
     private val tmpRect = RectF()
-
 
     private var pulse = 0f
     private var highlightIds: List<Int> = emptyList()
@@ -36,12 +43,10 @@ class DetectionOverlayView @JvmOverloads constructor(
     private var altAnimator: ValueAnimator? = null
     private var altIndex = 0
 
-
     fun submitBoxes(newBoxes: List<ButtonBox>) {
         boxes.clear(); boxes.addAll(newBoxes)
         invalidate()
     }
-
 
     fun highlight(ids: List<Int>, ambiguous: Boolean) {
         highlightIds = ids
@@ -49,20 +54,17 @@ class DetectionOverlayView @JvmOverloads constructor(
         startPulse(); startAlternationIfNeeded()
     }
 
-
     fun clearHighlight() {
         highlightIds = emptyList(); amb = false
         stopAnimators(); invalidate()
     }
 
-    // ✅ [추가] YOLO에 넣었던 원본(Bitmap) 크기 알려주기
     fun setSourceSize(w: Int, h: Int) {
         srcW = w; srcH = h
         computeMatrix()
         invalidate()
     }
 
-    // ✅ [추가] PreviewView.ScaleType.FILL_CENTER(센터-크롭) 매핑
     private fun computeMatrix() {
         if (srcW <= 0 || srcH <= 0 || width <= 0 || height <= 0) return
         val scale = kotlin.math.max(width.toFloat() / srcW, height.toFloat() / srcH)
@@ -75,9 +77,8 @@ class DetectionOverlayView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        computeMatrix() // 뷰 크기 변하면 재계산
+        computeMatrix()
     }
-
 
     private fun startPulse() {
         pulseAnimator?.cancel()
@@ -85,11 +86,13 @@ class DetectionOverlayView @JvmOverloads constructor(
             duration = 800L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
-            addUpdateListener { pulse = it.animatedValue as Float; invalidate() }
+            addUpdateListener {
+                pulse = it.animatedValue as Float
+                invalidate()
+            }
             start()
         }
     }
-
 
     private fun startAlternationIfNeeded() {
         altAnimator?.cancel()
@@ -98,27 +101,33 @@ class DetectionOverlayView @JvmOverloads constructor(
             altAnimator = ValueAnimator.ofInt(0, 1).apply {
                 duration = 900L
                 repeatCount = ValueAnimator.INFINITE
-                addUpdateListener { altIndex = it.animatedValue as Int; invalidate() }
+                addUpdateListener {
+                    altIndex = it.animatedValue as Int
+                    invalidate()
+                }
                 start()
             }
         }
     }
 
-
     private fun stopAnimators() { pulseAnimator?.cancel(); altAnimator?.cancel() }
 
-
     override fun onDetachedFromWindow() { super.onDetachedFromWindow(); stopAnimators() }
-
-
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (boxes.isEmpty()) return
 
+        // 테두리용 펄스 알파/두께
         val a = (120 + 80 * sin(pulse * Math.PI)).toInt().coerceIn(0, 255)
-        paint.alpha = a
-        paint.strokeWidth = 6f + 4f * pulse
+        strokePaint.alpha = a
+        strokePaint.strokeWidth = 6f + 4f * pulse
+
+        // ★ 채움은 테두리보다 약간 더 투명하게 (너무 옅어지지 않게 범위 제한)
+        val fillAlpha = ((a * 0.55f) + 40).toInt().coerceIn(60, 140)
+        fillPaint.alpha = fillAlpha
+        // 고정으로 쓰고 싶으면 위 한 줄 대신 ↓
+        // fillPaint.alpha = 90
 
         val idsToDraw = when {
             amb && highlightIds.size >= 2 -> setOf(highlightIds[altIndex])
@@ -126,12 +135,18 @@ class DetectionOverlayView @JvmOverloads constructor(
         }
 
         boxes.forEach { b ->
-            // ✅ [핵심 한 줄] src(px) → view 좌표로 변환
+            // src(px) → view 좌표로 변환
             tmpRect.set(b.rect)
             if (srcW > 0 && srcH > 0) srcToView.mapRect(tmpRect)
 
-            paint.color = if (idsToDraw.contains(b.id)) Color.RED else Color.TRANSPARENT
-            canvas.drawRoundRect(tmpRect, 18f, 18f, paint)
+            if (idsToDraw.contains(b.id)) {
+                // ★ 먼저 반투명 채우기
+                canvas.drawRoundRect(tmpRect, 18f, 18f, fillPaint)
+                // 그 다음 빨간 테두리
+                strokePaint.color = Color.RED
+                canvas.drawRoundRect(tmpRect, 18f, 18f, strokePaint)
+            }
+            // 하이라이트가 아닌 박스는 그리지 않음(원래도 투명 처리였음)
         }
     }
 }
