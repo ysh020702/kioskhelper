@@ -18,7 +18,7 @@ import javax.inject.Singleton
 object VisionModule {
     // ── 기본 설정값(원하면 바꿔서 바인딩 가능) ──────────────────────────────
     @Provides @Named("yolo_asset")
-    fun provideYoloAssetName(): String = "best_float16.tflite"
+    fun provideYoloAssetName(): String = "besttttttttttt_int8.tflite"
 
     @Provides @Named("role_asset")
     fun provideRoleAssetName(): String = "icon_mnv3_int8.tflite"

@@ -32,7 +32,7 @@ class MiniLMMatcher(context: Context) {
     }
 
 
-    private val threshold = 0.6 // 문자열 유사도 임계값
+    private val threshold = 0.8 // 문자열 유사도 임계값
 
     /** 버튼과 query 유사도 계산 후 id 반환 */
     fun matchAndHighlight(query: String, buttons: List<ButtonBox>): List<Int> {
@@ -76,11 +76,22 @@ class MiniLMMatcher(context: Context) {
     }
 
     /** Levenshtein 기반 문자열 유사도 0~1 */
+    /** Levenshtein 기반 문자열 유사도 0~1 (절대 + 상대 혼합) */
     private fun similarity(s1: String, s2: String): Double {
         val distance = levenshteinDistance(s1, s2)
         val maxLen = maxOf(s1.length, s2.length)
-        return if (maxLen == 0) 1.0 else 1.0 - distance.toDouble() / maxLen
+        if (maxLen == 0) return 1.0
+
+        val relativeSim = 1.0 - distance.toDouble() / maxLen
+
+        // 절대값 보정: 편집거리 1 이하일 경우 높은 유사도 부여
+        return when {
+            distance == 0 -> 1.0
+            distance == 1 -> max(0.8, relativeSim) // 짧은 단어 보정
+            else -> relativeSim
+        }
     }
+
 
     /** Levenshtein Distance 계산 */
     private fun levenshteinDistance(s: String, t: String): Int {
