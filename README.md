@@ -1,5 +1,5 @@
 # 키오스크 도우미 (KioskHelper) 🎤📱
-
+<--
 [![Contributors](https://img.shields.io/github/contributors/ysh020702/kioskhelper.svg?style=for-the-badge)](https://github.com/ysh020702/kioskhelper/graphs/contributors)
 [![Forks](https://img.shields.io/github/forks/ysh020702/kioskhelper.svg?style=for-the-badge)](https://github.com/ysh020702/kioskhelper/network/members)
 [![Stargazers](https://img.shields.io/github/stars/ysh020702/kioskhelper.svg?style=for-the-badge)](https://github.com/ysh020702/kioskhelper/stargazers)
@@ -7,6 +7,7 @@
 ![License](https://img.shields.io/github/license/ysh020702/kioskhelper?style=for-the-badge)
 ![Last Commit](https://img.shields.io/github/last-commit/ysh020702/kioskhelper?style=for-the-badge)
 ![License](https://img.shields.io/github/license/ysh020702/kioskhelper?style=for-the-badge)
+-->
 
 > **AI 기반 키오스크 보조 앱**  
 > 카메라로 버튼을 인식하고, 음성 명령으로 원하는 기능을 **탐지 → 강조 → 안내**합니다.  
