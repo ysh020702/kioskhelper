@@ -1,12 +1,9 @@
-package com.example.kioskhelper.presentation.kiosk.screen
+package com.example.kioskhelper.presentation.kiosk
 
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
-import androidx.compose.ui.graphics.Color
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
@@ -21,7 +18,7 @@ open class BaseActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         // ✅ 네비게이션 바 투명 + 대비 스크림 제거 + 어두운 아이콘
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
         }

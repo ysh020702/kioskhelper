@@ -5,7 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import com.example.kioskhelper.presentation.kiosk.screen.BaseActivity
+import com.example.kioskhelper.presentation.kiosk.BaseActivity
 import com.example.kioskhelper.presentation.kiosk.screen.KioskScreen
 import com.example.kioskhelper.ui.theme.KioskhelperTheme
 import com.example.kioskhelper.vision.TfliteTaskObjectDetector
