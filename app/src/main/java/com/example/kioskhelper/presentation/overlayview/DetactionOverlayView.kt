@@ -123,27 +123,33 @@ class DetectionOverlayView @JvmOverloads constructor(
         strokePaint.alpha = a
         strokePaint.strokeWidth = 6f + 4f * pulse
 
-        // ★ 채움은 테두리보다 약간 더 투명하게 (너무 옅어지지 않게 범위 제한)
+        // 채움 알파 (빨간색 전용)
         val fillAlpha = ((a * 0.55f) + 40).toInt().coerceIn(60, 140)
-        fillPaint.alpha = fillAlpha
-        // 고정으로 쓰고 싶으면 위 한 줄 대신 ↓
-        // fillPaint.alpha = 90
 
         val idsToDraw: Set<Int> = highlightIds.toSet()
 
         boxes.forEach { b ->
-            // src(px) → view 좌표로 변환
             tmpRect.set(b.rect)
             if (srcW > 0 && srcH > 0) srcToView.mapRect(tmpRect)
 
             if (idsToDraw.contains(b.id)) {
-                // ★ 먼저 반투명 채우기
-                canvas.drawRoundRect(tmpRect, 18f, 18f, fillPaint)
-                // 그 다음 빨간 테두리
+                // 🔴 빨간색: 채움 + 테두리
+                fillPaint.color = Color.RED
+                fillPaint.alpha = fillAlpha
                 strokePaint.color = Color.RED
+
+                canvas.drawRoundRect(tmpRect, 18f, 18f, fillPaint)
+                canvas.drawRoundRect(tmpRect, 18f, 18f, strokePaint)
+            } else {
+                // 🔵 파란색: 테두리만 (안은 투명)
+                strokePaint.color = Color.BLUE
+                strokePaint.alpha = 180  // 펄스 말고 고정값으로 줄 수도 있음
+                strokePaint.strokeWidth = 5f
+
                 canvas.drawRoundRect(tmpRect, 18f, 18f, strokePaint)
             }
-            // 하이라이트가 아닌 박스는 그리지 않음(원래도 투명 처리였음)
         }
     }
+
+
 }
