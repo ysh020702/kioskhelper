@@ -140,14 +140,14 @@ class DetectionOverlayView @JvmOverloads constructor(
 
                 canvas.drawRoundRect(tmpRect, 18f, 18f, fillPaint)
                 canvas.drawRoundRect(tmpRect, 18f, 18f, strokePaint)
-            } /*else {
+            } else {
                 // 🔵 파란색: 테두리만 (안은 투명)
                 strokePaint.color = Color.BLUE
                 strokePaint.alpha = 180  // 펄스 말고 고정값으로 줄 수도 있음
                 strokePaint.strokeWidth = 5f
 
                 canvas.drawRoundRect(tmpRect, 18f, 18f, strokePaint)
-            }*/
+            }
         }
     }
 

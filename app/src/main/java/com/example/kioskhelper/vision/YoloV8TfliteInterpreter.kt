@@ -5,7 +5,6 @@ import android.graphics.*
 import android.util.Log
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.DataType
-import org.tensorflow.lite.flex.FlexDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -37,11 +36,7 @@ class YoloV8TfliteInterpreter(
         val fd = context.assets.openFd(modelAsset)
         val channel = FileInputStream(fd.fileDescriptor).channel
         val model = channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
-        val flexDelegate = FlexDelegate()
-        val opts = Interpreter.Options().apply {
-            setNumThreads(numThreads)
-            addDelegate(flexDelegate) // Flex ops delegate 추가
-        }
+        val opts = Interpreter.Options().apply { setNumThreads(numThreads) }
         interpreter = Interpreter(model, opts)
 
         inType = interpreter.getInputTensor(0).dataType()
