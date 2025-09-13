@@ -127,31 +127,63 @@ git clone https://github.com/ysh020702/kioskhelper.git
 추가 예정
 ```
 
-## 9. 프로젝트 구조
+## 9. 프로젝트 핵심 구조
+### Android Application
 ```
 kioskhelper/
-├─ core/                 # 코어 유틸/상수/확장/베이스(공용 레이어)
 ├─ data/                 # Repository 구현, 로컬/원격/시스템(data source)
-│  ├─ platform
-│  └─ repositoryImpl
-├─ di/                   # Hilt DI 모듈(Repository/UseCase/Model 제공자)
+│  ├─ platform/                  
+│  │  ├─ SimpleStt.kt                # Android SpeechRecognizer를 감싼 경량 STT 래퍼
+│  │  └─ SimpleTts.kt                # Android TextToSpeech를 감싼 경량 TTS 래퍼
+│  │
+│  └─ repositoryImpl/
+│     ├─ SttRepositoryImpl.kt        # SimpleStt를 활용해 SttRepository를 구현, 콜백을 Flow로 변환
+│     └─ TtsRepositoryImpl.kt        # SimpleTts를 활용해 TtsRepository를 구현, 발화 제어와 이벤트 제공
+│
+├─ di/                   # Hilt DI 모듈 (Repository/UseCase/Model 제공자)
+│  ├─ RepositoryModule.kt            # Repository 구현체들을 Hilt에 바인딩하는 모듈
+│  ├─ TtsSttModule.kt                # SimpleTTS / SimpleSTT 객체를 제공하는 모듈
+│  └─ VisionModule.kt                # YOLO 감지기와 아이콘 역할 분류기를 Hilt에 제공하는 모듈
+│
 ├─ domain/               # UseCase, 엔터티/모델, 인터페이스(비즈니스 규칙)
-│  ├─
-│  ├─
-│  ├─
-│  ├─
-│  └─
+│  └─ repository/
+│  │  ├─ SttRepository.kt            # STT(음성 인식) 이벤트·텍스트 스트림 및 제어를 정의하는 인터페이스
+│  │  └─ TtsRepository.kt            # TTS(음성 합성) 발화 제어·이벤트 스트림을 정의하는 인터페이스
+│  └─ usecase/
+│     ├─ stt/                        # STT(음성 인식) 관련 유스케이스 모음
+│     └─ tts/                        # TTS(음성 합성) 관련 유스케이스 모음 
 │
 ├─ presentation/         # Compose UI, ViewModel, 화면/컴포넌트
-├─ ui/
-│  └─ theme/             # Compose 테마, 컬러/타이포/셰이프
-├─ utils/                # 공통 도우미(변환, 로깅, 좌표 매핑 등)
-├─ vision/               # 온디바이스 비전(YOLOv8 TFLite, OCR, 분류기 등)
-│   ├─ YoloV8TfliteInterpreter.kt   # 버튼 후보 탐지(TFLite 추론)
-│   ├─ IconRoleClassifier.kt        # 아이콘형 버튼 역할 분류(예: ↑,↓,✕)
-│   └─ (ex) OcrTflite*.kt           # 버튼 텍스트 추출(OCR)
+│  ├─ kiosk/
+│  │  ├─ BaseActivity.kt             # 시스템 바를 숨기고 네비게이션 바 스타일을 설정하는 기본 Activity
+│  │  ├─ KioskActivity.kt            # 카메라·오디오 권한 요청 후 KioskScreen을 띄우는 진입 Activity
+│  │  ├─ KioskViewModel.kt           # STT/TTS 제어, 버튼 하이라이트 로직, UI 상태를 관리하는 뷰모델
+│  │  ├─ VisionViewModel.kt          # YOLO 감지기와 아이콘 역할 분류기를 제공하는 뷰모델
+│  │  ├─ setupCamera.kt              # CameraX Preview·ImageAnalysis를 바인딩하고 ObjectDetectAnalyzer 연결
+│  │  └─ screen/
+│  │     ├─ KioskScreen.kt           # 카메라 뷰, 음성 인식 UI, 상태 표시 등을 통합한 메인 Compose 스크린
+│  │     └─ CameraWithOverlay.kt     # CameraX Preview와 DetectionOverlayView를 함께 배치하는 컴포저블
+│  │
+│  ├─ model/
+│  │  └─ ButtonBox.kt                # 버튼 위치(Rect)와 라벨(OCR/아이콘) 정보를 담는 데이터 모델
+│  │
+│  └─ overlayview/
+│     └─ DetectionOverlayView.kt     # YOLO 탐지 박스를 파란/빨간 박스로 그려주는 커스텀 View
+│
+├─ ui/theme/             # Compose 테마, 컬러
+│  ├─ color.kt                       # 공용 color 설정
+│  └─ Theme.kt                       # 테마 설정
+│ 
+├─ utils/                # 공통 도우미(변환 등)
+│  └─ YuvToRgbConverter.kt          # CameraX의 YUV 포맷 ImageProxy를 RGB Bitmap으로 변환
+│ 
+├─ vision/               # 온디바이스 비전 모델(YOLOv8 TFLite, OCR, 분류기 등)
+│   ├─ YoloV8TfliteInterpreter.kt   # 버튼 후보 탐지(YOLOv8 TFLite 추론)
+│   └─ IconRoleClassifier.kt        # 버튼 역할 분류(OCR 분류 또는 ↑,↓,✕등의 아이콘 분류)
+│ 
 └─ KioskApp.kt           # 앱 진입/Compose 세팅
 ```
+### 
 
 ## 10. 팀 소개
 | 이름      | 소속       | 전공/학번           | 역할     | 담당                             |
