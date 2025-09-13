@@ -198,6 +198,8 @@ kioskhelper/
 └─ KioskApp.kt           # 앱 진입/Compose 세팅
 ```
 ### 
+
+yolo 학습모델 및 데이터 구조 
 ```
 YOLO_PROJECT/
 ├── dataset/                  # 데이터셋 최상위 폴더
@@ -222,6 +224,37 @@ YOLO_PROJECT/
 │   └── data_path.yaml        # 데이터셋 설정 파일 (경로, 클래스 정의)
 ├── train.py                  # 모델 학습을 실행하는 메인 스크립트
 └── yolov8n.pt                # 학습에 사용할 YOLOv8 모델 가중치 파일
+```
+
+전처리 폴더 구조
+```
+data/
+├── raw_data/                 # 전처리하기 전의 원본 데이터 폴더
+│   ├── image_001.jpg         # 원본 이미지 파일
+│   ├── image_001/            # 원본 이미지를 조각낸 파일들의 폴더
+│   │   ├── image_001_1.jpg
+│   │   ├── ...
+│   │   └── image_001_28.jpg
+│   ├── ...
+│   ├── image_080.jpg
+│   └── image_080/
+│       ├── image_080_1.jpg
+│       ├── ...
+│       └── image_080_32.jpg
+│
+├── preprocessed_data/        # 전처리가 완료된 학습용 데이터 폴더
+│   ├── images/               # YOLO 학습에 사용될 최종 이미지
+│   │   ├── image_001.jpg
+│   │   ├── ...
+│   │   └── image_080.jpg
+│   └── labels/               # YOLO 학습에 사용될 최종 라벨
+│       ├── image_001.txt
+│       ├── ...
+│       └── image_080.txt
+│
+└── preprocess.py             # raw_data를 preprocessed_data로 변환하는 전처리 스크립트
+```
+
 ```
 ---
 
