@@ -198,35 +198,31 @@ kioskhelper/
 └─ KioskApp.kt           # 앱 진입/Compose 세팅
 ```
 ### 
-Yolo
-├─dataset
-│  ├─images
-│  │  ├─train
-│  │  │  ├─image_001.jpg
-│  │  │  │    . . .
-│  │  │  └─image_068.jpg
-│  │  │
-│  │  └─val
-│  │       ├─image_069.jpg
-│  │       │    . . .
-│  │       └─image_080.jpg
-│  │ 
-│  ├─labels
-│  │  ├─train
-│  │  │  ├─image_001.txt
-│  │  │  │    . . .
-│  │  │  └─image_068.txt
-│  │  │
-│  │  └─val
-│  │       ├─image_069.txt
-│  │       │    . . .
-│  │       └─image_080.txt
-│  │
-│  └─data_path.yaml 
-│
-├─ train.py
-│
-└─ yolov8n.pt
+```
+YOLO_PROJECT/
+├── dataset/                  # 데이터셋 최상위 폴더
+│   ├── images/               # 이미지 원본 파일 폴더
+│   │   ├── train/            # 학습용 이미지
+│   │   │   ├── image_001.jpg
+│   │   │   ├── ...
+│   │   │   └── image_068.jpg
+│   │   └── val/              # 검증용 이미지
+│   │       ├── image_069.jpg
+│   │       ├── ...
+│   │       └── image_080.jpg
+│   ├── labels/               # YOLO 포맷 라벨(.txt) 폴더
+│   │   ├── train/            # 학습용 라벨
+│   │   │   ├── image_001.txt
+│   │   │   ├── ...
+│   │   │   └── image_068.txt
+│   │   └── val/              # 검증용 라벨
+│   │       ├── image_069.txt
+│   │       ├── ...
+│   │       └── image_080.txt
+│   └── data_path.yaml        # 데이터셋 설정 파일 (경로, 클래스 정의)
+├── train.py                  # 모델 학습을 실행하는 메인 스크립트
+└── yolov8n.pt                # 학습에 사용할 YOLOv8 모델 가중치 파일
+```
 ---
 
 ## 9. 팀 소개
