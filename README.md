@@ -198,7 +198,35 @@ kioskhelper/
 └─ KioskApp.kt           # 앱 진입/Compose 세팅
 ```
 ### 
-
+Yolo
+├─dataset
+│  ├─images
+│  │  ├─train
+│  │  │  ├─image_001.jpg
+│  │  │  │    . . .
+│  │  │  └─image_068.jpg
+│  │  │
+│  │  └─val
+│  │       ├─image_069.jpg
+│  │       │    . . .
+│  │       └─image_080.jpg
+│  │ 
+│  ├─labels
+│  │  ├─train
+│  │  │  ├─image_001.txt
+│  │  │  │    . . .
+│  │  │  └─image_068.txt
+│  │  │
+│  │  └─val
+│  │       ├─image_069.txt
+│  │       │    . . .
+│  │       └─image_080.txt
+│  │
+│  └─data_path.yaml 
+│
+├─ train.py
+│
+└─ yolov8n.pt
 ---
 
 ## 9. 팀 소개
