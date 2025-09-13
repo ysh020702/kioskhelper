@@ -255,7 +255,7 @@ data/
 └── preprocess.py             # raw_data를 preprocessed_data로 변환하는 전처리 스크립트
 ```
 
-```
+
 ---
 
 ## 9. 팀 소개
